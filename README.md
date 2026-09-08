@@ -1171,21 +1171,24 @@ The script automatically fetches changes, upgrades dependencies, executes `test_
 
 ### Step 9: Automated Continuous Deployment via GitHub Actions (1-Click Push-to-Deploy)
 
-A production-ready GitHub Actions workflow is pre-configured at [`.github/workflows/deploy.yml`](file:///c:/Users/x000sec/Desktop/Projects/hyper_hedge_research/.github/workflows/deploy.yml). Whenever you push to the `main` branch or click **Run workflow** in the GitHub Actions tab, the workflow connects securely to your VPS via SSH, updates the repository, writes the production `.env` configuration, and restarts `bybit-bot.service`.
+A production-ready GitHub Actions workflow is pre-configured at [`.github/workflows/deploy.yml`](file:///c:/Users/x000sec/Desktop/Projects/hyper_hedge_research/.github/workflows/deploy.yml). It supports both **Password Authentication** (using `sshpass`) and **SSH Key Authentication**, tailored for **Debian 13 (Trixie)** and **Ubuntu LTS**.
+
+Whenever you push to the `main` branch or click **Run workflow** in the GitHub Actions tab, the workflow connects securely to your VPS, updates the repository, writes the production `.env` configuration, and restarts `bybit-bot.service`.
 
 #### GitHub Repository Secrets Setup:
 In your GitHub repository, navigate to **Settings** -> **Secrets and variables** -> **Actions** -> **New repository secret**:
 
 | Secret Name | Required | Example / Description |
 |:---|:---:|:---|
-| `VPS_HOST` | **Required** | Public IPv4 address of your VPS (e.g. `159.65.12.34`) |
-| `VPS_SSH_KEY` | **Required** | Your private SSH key (e.g. contents of `~/.ssh/id_rsa` or `~/.ssh/id_ed25519`) |
-| `VPS_USER` | Optional | SSH username (`root` or `trader`, defaults to `root`) |
+| `VPS_HOST` | **Required** | Public IPv4 address of your Debian VPS (e.g. `159.65.12.34`) |
+| `VPS_PASSWORD` | **Required (if no key)** | Your VPS login password (uses `sshpass`) |
+| `VPS_SSH_KEY` | Optional | Your private SSH key (if using key-based auth instead of password) |
+| `VPS_USER` | Optional | SSH username (`root` or your sudo user, defaults to `root`) |
 | `VPS_PORT` | Optional | SSH port (defaults to `22`) |
 | `BYBIT_API_KEY` | Optional | Your Bybit API Key (defaults to current testnet key if omitted) |
 | `BYBIT_API_SECRET` | Optional | Your Bybit API Secret (defaults to current testnet secret if omitted) |
 
-Once these secrets are set, any commit to `main` automatically deploys and runs on your VPS!
+Once `VPS_HOST` and `VPS_PASSWORD` (or `VPS_SSH_KEY`) are set, any commit to `main` automatically deploys and runs on your Debian VPS!
 
 ---
 

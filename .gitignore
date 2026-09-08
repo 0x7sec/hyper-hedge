@@ -26,6 +26,7 @@ dist/
 *.log
 *.csv
 *.pkl
+bot_state.json*
 
 # ── Operating System & IDEs ───────────────────────────────────────────────────
 .DS_Store

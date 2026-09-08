@@ -1152,6 +1152,22 @@ Check your latest closed trades anytime:
 tail -n 20 /home/trader/hyper_hedge_research/bybit_trades.csv
 ```
 
+#### 3. Authenticated Web Dashboard & AI Tracking Endpoint:
+The system includes a zero-overhead, password-protected HTTP monitoring daemon (`bybit-telemetry.service`) running on port `8080`:
+
+* **Web Browser Dashboard**: `http://<vps-ip>:8080/dashboard?password=<TELEMETRY_PASSWORD>`
+  * Live dark-mode interface showing real-time floating PnL, active hedge legs, trailing stop ratchets, trade history, and sanitized systemd logs.
+* **AI Model Endpoint**: `http://<vps-ip>:8080/api/ai-summary?password=<TELEMETRY_PASSWORD>`
+  * Compact, high-signal Markdown document engineered specifically for AI assistants (Antigravity, Claude, ChatGPT) to fetch and track bot health, open market risk, and crash diagnostics in ~500 tokens.
+* **JSON State API**: `http://<vps-ip>:8080/api/status?password=<TELEMETRY_PASSWORD>`
+* **Sanitized Crash Logs**: `http://<vps-ip>:8080/api/logs?password=<TELEMETRY_PASSWORD>&lines=100`
+
+**Managing Telemetry Daemon**:
+```bash
+sudo systemctl status bybit-telemetry
+sudo systemctl restart bybit-telemetry
+```
+
 ---
 
 ### Step 8: Safe Maintenance & Zero-Downtime Updates

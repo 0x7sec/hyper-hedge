@@ -4,22 +4,23 @@
 # ==============================================================================
 set -euo pipefail
 
-APP_DIR="/home/trader/hyper_hedge_research"
+APP_DIR="${HOME}/hyper_hedge_research"
 cd "$APP_DIR"
 
-echo "=== [1/4] Pulling latest changes from git ==="
+echo "=== [1/3] Pulling latest changes from git ==="
 git fetch origin
-git pull origin main
+git reset --hard origin/main
 
-echo "=== [2/4] Updating Python dependencies ==="
-source venv/bin/activate
-pip install -r requirements.txt --upgrade
+echo "=== [2/3] Updating Python dependencies ==="
+./venv/bin/pip install -r requirements.txt --upgrade -q
 
-echo "=== [3/4] Running automated test suite ==="
-python scratch/test_multi_bot_suite.py
+echo "=== [3/3] Restarting Services (Bot + Telemetry) ==="
+if [ "$(id -u)" -eq 0 ]; then
+  systemctl restart bybit-bot bybit-telemetry
+  systemctl status bybit-bot bybit-telemetry --no-pager
+else
+  sudo systemctl restart bybit-bot bybit-telemetry
+  sudo systemctl status bybit-bot bybit-telemetry --no-pager
+fi
 
-echo "=== [4/4] Restarting Bybit Bot Service ==="
-sudo systemctl restart bybit-bot
-
-echo "=== Update complete! Current status: ==="
-sudo systemctl status bybit-bot --no-pager
+echo "=== Update complete! Both services active ==="

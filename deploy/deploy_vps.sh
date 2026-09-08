@@ -53,6 +53,19 @@ fi
 ./venv/bin/pip install -r requirements.txt -q
 
 echo "=== [4/6] Injecting Active Configuration & Credentials (.env) ==="
+EXISTING_TPASS=""
+if [ -f .env ]; then
+  EXISTING_TPASS=$(grep "^TELEMETRY_PASSWORD=" .env 2>/dev/null | cut -d'=' -f2- || true)
+fi
+
+if [ -n "${TELEMETRY_PASS:-}" ]; then
+  FINAL_TPASS="${TELEMETRY_PASS}"
+elif [ -n "$EXISTING_TPASS" ]; then
+  FINAL_TPASS="$EXISTING_TPASS"
+else
+  FINAL_TPASS=$(openssl rand -hex 16 2>/dev/null || head -c 32 /dev/urandom | tr -dc A-Za-z0-9 | head -c 24 || echo "sec_hedge_$(date +%s)")
+fi
+
 cat << 'ENVCONF' > .env
 # ==============================================================================
 # BYBIT V5 MULTI-PAIR HEDGE BOT CONFIGURATION (BTC, ETH, SOL)
@@ -69,7 +82,10 @@ COOLDOWN_SECS=0
 MAX_CYCLES=0
 DRY_RUN=false
 LOG_CSV=bybit_trades.csv
+TELEMETRY_PORT=8080
 ENVCONF
+
+echo "TELEMETRY_PASSWORD=${FINAL_TPASS}" >> .env
 
 # If custom BYBIT_KEY and BYBIT_SECRET are passed as environment variables, override them
 if [ -n "${BYBIT_KEY:-}" ]; then
@@ -80,7 +96,8 @@ if [ -n "${BYBIT_SECRET:-}" ]; then
 fi
 chmod 600 .env
 
-echo "=== [5/6] Configuring & Starting systemd Daemon ==="
+echo "=== [5/6] Configuring & Starting systemd Daemons ==="
+# 1. Trading Bot Engine Service
 $SUDO tee /etc/systemd/system/bybit-bot.service > /dev/null << SERVICE
 [Unit]
 Description=Bybit Multi-Pair Concurrent Dual-Leg Hedge Bot
@@ -111,6 +128,37 @@ SyslogIdentifier=bybit-bot
 WantedBy=multi-user.target
 SERVICE
 
+# 2. Telemetry & AI Monitoring Server Service
+$SUDO tee /etc/systemd/system/bybit-telemetry.service > /dev/null << TELEMSERVICE
+[Unit]
+Description=Bybit Multi-Pair Bot HTTP Telemetry & AI Monitoring Server
+After=network.target network-online.target time-sync.target
+Wants=network-online.target time-sync.target
+
+[Service]
+Type=simple
+User=$CURRENT_USER
+Group=$CURRENT_GROUP
+WorkingDirectory=$APP_DIR
+EnvironmentFile=$APP_DIR/.env
+ExecStart=$APP_DIR/venv/bin/python telemetry_server.py
+Restart=always
+RestartSec=5
+
+# Resource governance & crash resilience
+LimitNOFILE=65535
+TimeoutStopSec=15
+KillMode=process
+
+# Logging: routed to systemd journal
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bybit-telemetry
+
+[Install]
+WantedBy=multi-user.target
+TELEMSERVICE
+
 # Configure Logrotate for trade audit CSV
 $SUDO tee /etc/logrotate.d/bybit-bot > /dev/null << LOGROT
 $APP_DIR/bybit_trades.csv {
@@ -125,18 +173,47 @@ $APP_DIR/bybit_trades.csv {
 LOGROT
 $SUDO chmod 644 /etc/logrotate.d/bybit-bot
 
-# Reload and restart daemon
+# Open firewall port 8080 if UFW is active
+if command -v ufw >/dev/null 2>&1; then
+  if $SUDO ufw status | grep -q "Status: active"; then
+    echo "Opening port 8080 in UFW firewall..."
+    $SUDO ufw allow 8080/tcp comment 'Bybit Telemetry API' || true
+  fi
+fi
+
+# Reload and restart daemons
 $SUDO systemctl daemon-reload
-$SUDO systemctl enable bybit-bot
-$SUDO systemctl restart bybit-bot
+$SUDO systemctl enable bybit-bot bybit-telemetry
+$SUDO systemctl restart bybit-bot bybit-telemetry
 
 echo "=== [6/6] Verifying Daemon Status ==="
 sleep 3
+BOT_ACTIVE=false
+TELEM_ACTIVE=false
+
 if $SUDO systemctl is-active --quiet bybit-bot; then
-  echo ">>> SUCCESS: bybit-bot is ACTIVE and running on VPS! <<<"
-  $SUDO systemctl status bybit-bot --no-pager
+  BOT_ACTIVE=true
+fi
+if $SUDO systemctl is-active --quiet bybit-telemetry; then
+  TELEM_ACTIVE=true
+fi
+
+VPS_IP=$(curl -s -4 ifconfig.me 2>/dev/null || curl -s -4 icanhazip.com 2>/dev/null || echo "<vps-ip>")
+
+if [ "$BOT_ACTIVE" = true ] && [ "$TELEM_ACTIVE" = true ]; then
+  echo "=============================================================================="
+  echo ">>> SUCCESS: All services ACTIVE and running on VPS! <<<"
+  echo "=============================================================================="
+  echo "  • bybit-bot.service      : ACTIVE (Trading Engine)"
+  echo "  • bybit-telemetry.service: ACTIVE (HTTP Telemetry & AI API)"
+  echo "------------------------------------------------------------------------------"
+  echo "📊 Web Dashboard URL     : http://${VPS_IP}:8080/dashboard?password=${FINAL_TPASS}"
+  echo "🤖 AI Monitoring Endpoint: http://${VPS_IP}:8080/api/ai-summary?password=${FINAL_TPASS}"
+  echo "🔑 Telemetry Password    : ${FINAL_TPASS}"
+  echo "=============================================================================="
+  $SUDO systemctl status bybit-bot bybit-telemetry --no-pager
 else
-  echo "ERROR: bybit-bot failed to start. Recent journal logs:"
-  $SUDO journalctl -u bybit-bot -n 50 --no-pager
+  echo "ERROR: One or more services failed to start."
+  $SUDO systemctl status bybit-bot bybit-telemetry --no-pager
   exit 1
 fi

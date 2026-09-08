@@ -9,6 +9,7 @@ if sys.platform == "win32":
         pass
 
 import time
+import json
 import csv
 import logging
 from datetime import datetime
@@ -227,6 +228,7 @@ class BybitTradingEngine:
 
         except Exception as e:
             logger.warning(f"Reconciliation check skipped: {e}")
+        self._dump_state_json()
 
     # ==========================================================================
     # MAIN CONCURRENT LOOP
@@ -395,6 +397,85 @@ class BybitTradingEngine:
             f"  [cyan]Portfolio:[/cyan] {active_count}/{self.config.max_concurrent_pairs} Active Pairs | "
             f"Open PnL: ${tot_open:+.2f} | Realized PnL: ${cum_all:+.2f}"
         )
+        self._dump_state_json()
+
+    def _dump_state_json(self) -> None:
+        """Atomically dump current bot state to bot_state.json for the telemetry server."""
+        try:
+            cum_all = sum((p.cumulative_pnl for p in self.pairs.values()), Decimal("0"))
+            tot_open = Decimal("0")
+            pairs_dict = {}
+
+            for sym, pair in self.pairs.items():
+                px = pair.latest_price
+                px_float = float(px) if px is not None else None
+                l_pnl, l_pct = (pair.long_leg.pnl(px) if (pair.long_leg and px) else (Decimal("0"), Decimal("0")))
+                s_pnl, s_pct = (pair.short_leg.pnl(px) if (pair.short_leg and px) else (Decimal("0"), Decimal("0")))
+
+                if pair.status == "ACTIVE":
+                    tot_open += (l_pnl + s_pnl)
+
+                p_data = {
+                    "symbol": sym,
+                    "status": pair.status,
+                    "status_msg": pair.status_msg,
+                    "latest_price": px_float,
+                    "candle_interval": pair.cfg.candle_interval,
+                    "cycle_count": pair.cycle_count,
+                    "cumulative_pnl": float(pair.cumulative_pnl),
+                    "fast_ema": float(pair.fast_ema) if pair.fast_ema is not None else None,
+                    "slow_ema": float(pair.slow_ema) if pair.slow_ema is not None else None,
+                    "adx": float(pair.adx_val) if pair.adx_val is not None else None,
+                    "long_leg": None,
+                    "short_leg": None,
+                }
+
+                if pair.long_leg and pair.long_leg.status == "ACTIVE":
+                    p_data["long_leg"] = {
+                        "side": "Long",
+                        "size": float(pair.long_leg.size),
+                        "entry_price": float(pair.long_leg.entry_price),
+                        "peak_price": float(pair.long_leg.extreme_price),
+                        "trailing_sl": float(pair.long_leg.trailing_sl) if pair.long_leg.trailing_sl else None,
+                        "tp_target": float(pair.long_leg.tp_target) if pair.long_leg.tp_target else None,
+                        "unrealized_pnl": float(l_pnl),
+                        "pnl_pct": float(l_pct),
+                    }
+
+                if pair.short_leg and pair.short_leg.status == "ACTIVE":
+                    p_data["short_leg"] = {
+                        "side": "Short",
+                        "size": float(pair.short_leg.size),
+                        "entry_price": float(pair.short_leg.entry_price),
+                        "trough_price": float(pair.short_leg.extreme_price),
+                        "trailing_sl": float(pair.short_leg.trailing_sl) if pair.short_leg.trailing_sl else None,
+                        "tp_target": float(pair.short_leg.tp_target) if pair.short_leg.tp_target else None,
+                        "unrealized_pnl": float(s_pnl),
+                        "pnl_pct": float(s_pct),
+                    }
+
+                pairs_dict[sym] = p_data
+
+            state = {
+                "timestamp": datetime.now().isoformat(),
+                "uptime_seconds": int((datetime.now() - self.session_start).total_seconds()),
+                "total_cycles_completed": self.total_cycles_completed,
+                "scan_count": self.scan_count,
+                "network": "TESTNET" if self.config.testnet else "MAINNET",
+                "leverage": self.config.leverage,
+                "max_concurrent_pairs": self.config.max_concurrent_pairs,
+                "active_pairs_count": sum(1 for p in self.pairs.values() if p.status == "ACTIVE"),
+                "open_pnl": float(tot_open),
+                "realized_pnl": float(cum_all),
+                "pairs": pairs_dict,
+            }
+
+            tmp_file = "bot_state.json.tmp"
+            with open(tmp_file, "w", encoding="utf-8") as f:
+                json.dump(state, f, indent=2)
+            os.replace(tmp_file, "bot_state.json")
+        except Exception as e:
+            logger.debug(f"Failed to dump bot_state.json: {e}")
 
     def _check_pair_signal(self, pair: PairState, candles: List[Dict[str, Any]]) -> Optional[str]:
         """Check EMA crossover + ADX threshold on candles[-3] and candles[-2]."""
@@ -468,6 +549,7 @@ class BybitTradingEngine:
         logger.info(
             f"[{sym}] Both legs active: Long={long_size} @ {long_fill:.2f} | Short={short_size} @ {short_fill:.2f}"
         )
+        self._dump_state_json()
 
     # ==========================================================================
     # LIVE TICK HANDLER & TRAILING STOP
@@ -590,6 +672,7 @@ class BybitTradingEngine:
         else:
             pair.status = "SCANNING"
             pair.status_msg = "Scanning for next signal..."
+        self._dump_state_json()
 
     # ==========================================================================
     # REST EXCHANGE RECONCILIATION

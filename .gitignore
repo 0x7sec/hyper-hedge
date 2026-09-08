@@ -1,0 +1,36 @@
+# ── Credentials and Secrets ──────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+creds.txt
+*.key
+*.pem
+
+# ── Ignored Sub-Bots & Crates ────────────────────────────────────────────────
+hype_bot/
+
+# ── Python Cache & Environments ──────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+venv/
+.venv/
+env/
+ENV/
+build/
+dist/
+*.egg-info/
+
+# ── Runtime Logs, Data & Caches ──────────────────────────────────────────────
+*.log
+*.csv
+*.pkl
+
+# ── Operating System & IDEs ───────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo

@@ -1,0 +1,27 @@
+[Unit]
+Description=Bybit Multi-Pair Concurrent Dual-Leg Hedge Bot
+After=network.target network-online.target time-sync.target
+Wants=network-online.target time-sync.target
+
+[Service]
+Type=simple
+User=trader
+Group=trader
+WorkingDirectory=/home/trader/hyper_hedge_research
+EnvironmentFile=/home/trader/hyper_hedge_research/.env
+ExecStart=/home/trader/hyper_hedge_research/venv/bin/python run_bybit_bot.py
+Restart=always
+RestartSec=10
+
+# Resource governance & crash resilience
+LimitNOFILE=65535
+TimeoutStopSec=30
+KillMode=process
+
+# Logging: routed to systemd journal
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bybit-bot
+
+[Install]
+WantedBy=multi-user.target

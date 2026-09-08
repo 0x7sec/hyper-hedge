@@ -10,18 +10,18 @@ The system executes autonomous dual-leg hedging (simultaneous Long + Short) with
 
 ```mermaid
 graph TD
-    A[Market Candle Stream: 5-Min Interval] --> B{Entry Condition Check}
-    B -->|EMA 20/50 Cross + ADX > 22| C[Execute Simultaneous Double Entry]
-    B -->|Consolidation / Low ADX| A
+    A["Market Candle Stream: 5-Min Interval"] --> B{"Entry Condition Check"}
+    B -->|"EMA 20/50 Cross + ADX > 22"| C["Execute Simultaneous Double Entry"]
+    B -->|"Consolidation / Low ADX"| A
     
-    C --> D[Trend Leg: 100% Size<br>SL: -3.0% Trailing | TP: +5.0%]
-    C --> E[Counter-Trend Leg: 50% Size<br>SL: +3.0% Trailing | TP: -5.0%]
+    C --> D["Trend Leg: 100% Size<br>SL: -3.0% Trailing / TP: +5.0%"]
+    C --> E["Counter-Trend Leg: 50% Size<br>SL: +3.0% Trailing / TP: -5.0%"]
     
-    D --> F{Market Expansion}
+    D --> F{"Market Expansion"}
     E --> F
     
-    F -->|Directional Trend Winner| G[Counter Leg Stopped at -1.5%<br>Trend Leg Hits +5.0% TP<br><b>Net Result: +3.5% Gross Margin</b>]
-    F -->|Choppy Range Whipsaw| H[Both Legs Hit Trailing SL<br><b>Net Result: -4.5% Loss (vs -6% Symmetric)</b>]
+    F -->|"Directional Trend Winner"| G["Counter Leg Stopped at -1.5%<br>Trend Leg Hits +5.0% TP<br>Net Result: +3.5% Gross Margin"]
+    F -->|"Choppy Range Whipsaw"| H["Both Legs Hit Trailing SL<br>Net Result: -4.5% Loss (vs -6% Symmetric)"]
 ```
 
 ### Core Execution Rules:
@@ -842,24 +842,24 @@ Deploying an autonomous multi-pair hedge bot on a 24/7 Virtual Private Server (V
 
 ```mermaid
 graph LR
-    subgraph "Bybit Cloud Infrastructure"
-        BybitAPI[Bybit Unified Trading V5 API / WebSocket<br>AWS Tokyo / Singapore]
+    subgraph bybit_cloud ["Bybit Cloud Infrastructure"]
+        BybitAPI["Bybit Unified Trading V5 API / WebSocket<br>AWS Tokyo / Singapore"]
     end
 
-    subgraph "Production Linux VPS (Ubuntu 22.04 / 24.04 LTS)"
-        UFW[UFW Firewall + Fail2ban]
-        Chrony[Chrony Time Daemon<br>Sub-millisecond NTP Sync]
+    subgraph linux_vps ["Production Linux VPS (Debian 13 / Ubuntu LTS)"]
+        UFW["UFW Firewall + Fail2ban"]
+        Chrony["Chrony Time Daemon<br>Sub-millisecond NTP Sync"]
         
-        subgraph "Process Management"
-            Systemd[systemd: bybit-bot.service<br>Auto-Restart & Resource Limits]
-            Engine[Bybit Trading Engine<br>Python 3.11 Virtualenv]
-            WS[Unified WebSocket Multiplexer<br>BTC / ETH / SOL]
+        subgraph process_mgmt ["Process Management"]
+            Systemd["systemd: bybit-bot.service<br>Auto-Restart & Resource Limits"]
+            Engine["Bybit Trading Engine<br>Python 3.11 Virtualenv"]
+            WS["Unified WebSocket Multiplexer<br>BTC / ETH / SOL"]
         end
         
-        subgraph "Persistence & Logging"
-            CSV[(bybit_trades.csv<br>Audit Ledger)]
-            Logrotate[logrotate.d<br>Weekly Compression]
-            Journal[journalctl<br>Structured System Logs]
+        subgraph persistence_logging ["Persistence & Logging"]
+            CSV[("bybit_trades.csv<br>Audit Ledger")]
+            Logrotate["logrotate.d<br>Weekly Compression"]
+            Journal["journalctl<br>Structured System Logs"]
         end
     end
 
@@ -870,8 +870,8 @@ graph LR
     Engine --> CSV
     Engine --> Journal
     Logrotate --> CSV
-    WS <==>|Sub-millisecond WebSocket Ticks| BybitAPI
-    Engine <==>|REST Orders & Reconciliation| BybitAPI
+    WS <-->|"Sub-millisecond WebSocket Ticks"| BybitAPI
+    Engine <-->|"REST Orders & Reconciliation"| BybitAPI
 ```
 
 ---

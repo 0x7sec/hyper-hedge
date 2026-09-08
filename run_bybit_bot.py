@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Bybit Dual-Leg Gold (XAUUSDT) Trading Bot with pybit
-Places simultaneous Long and Short orders with 3% Trailing SL and 6% TP.
+Bybit Multi-Pair Concurrent Dual-Leg Hedging System (BTC, ETH, SOL)
+Executes autonomous dual-leg hedging with EMA crossovers, ADX gating, trailing stops, and break-even locks.
 """
 
 import sys

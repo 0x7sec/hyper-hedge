@@ -3,6 +3,7 @@
 # Bybit Multi-Pair Bot - Automated Debian/Ubuntu Production VPS Deploy Script
 # ==============================================================================
 set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
 
 # Debian / Ubuntu compatibility: use sudo only if not already running as root
 if [ "$(id -u)" -eq 0 ]; then
@@ -18,7 +19,7 @@ fi
 
 echo "=== [1/6] Preparing Debian 13 / Ubuntu VPS Environment ==="
 $SUDO apt-get update -qq
-$SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+$SUDO apt-get install -y -qq \
   python3 python3-venv python3-pip git chrony curl ca-certificates
 
 # Ensure clock synchronization is active (prevents Bybit Error 10002)
@@ -33,6 +34,7 @@ echo "Target Directory: $APP_DIR (User: $CURRENT_USER:$CURRENT_GROUP)"
 echo "=== [2/6] Syncing Code Repository ==="
 if [ ! -d "$APP_DIR/.git" ]; then
   echo "Cloning repository from GitHub..."
+  rm -rf "$APP_DIR"
   git clone https://github.com/0x7sec/hyper-hedge.git "$APP_DIR"
   cd "$APP_DIR"
 else
@@ -42,6 +44,7 @@ else
   git reset --hard origin/main
 fi
 
+cd "$APP_DIR"
 echo "=== [3/6] Setting Up Python Virtual Environment ==="
 if [ ! -d "venv" ]; then
   python3 -m venv venv

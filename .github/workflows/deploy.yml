@@ -23,6 +23,7 @@ jobs:
           VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
           BYBIT_API_KEY: ${{ secrets.BYBIT_API_KEY || 'zu7QF2MXivrNUpxe2y' }}
           BYBIT_API_SECRET: ${{ secrets.BYBIT_API_SECRET || 'mzYaF9c7tFLrLThjKsFLueoFeFyFs5c8RcYo' }}
+          TELEMETRY_PASSWORD: ${{ secrets.TELEMETRY_PASSWORD || 'hedge_bot_sec_2026' }}
         run: |
           if [ -z "$VPS_HOST" ]; then
             echo "::error::Missing VPS_HOST secret in GitHub Repository Settings -> Secrets and variables -> Actions"
@@ -40,10 +41,10 @@ jobs:
           if [ -n "$VPS_PASSWORD" ]; then
             echo "Using Password Authentication with sshpass..."
             sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
-            sshpass -p "$VPS_PASSWORD" ssh -p "$VPS_PORT" -o StrictHostKeyChecking=accept-new -o PubkeyAuthentication=no "$VPS_USER@$VPS_HOST" "BYBIT_KEY='$BYBIT_API_KEY' BYBIT_SECRET='$BYBIT_API_SECRET' bash -s" < deploy/deploy_vps.sh
+            sshpass -p "$VPS_PASSWORD" ssh -p "$VPS_PORT" -o StrictHostKeyChecking=accept-new -o PubkeyAuthentication=no "$VPS_USER@$VPS_HOST" "BYBIT_KEY='$BYBIT_API_KEY' BYBIT_SECRET='$BYBIT_API_SECRET' TELEMETRY_PASS='$TELEMETRY_PASSWORD' bash -s" < deploy/deploy_vps.sh
           else
             echo "Using Private Key Authentication..."
             echo "$VPS_SSH_KEY" > ~/.ssh/deploy_key
             chmod 600 ~/.ssh/deploy_key
-            ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o StrictHostKeyChecking=accept-new "$VPS_USER@$VPS_HOST" "BYBIT_KEY='$BYBIT_API_KEY' BYBIT_SECRET='$BYBIT_API_SECRET' bash -s" < deploy/deploy_vps.sh
+            ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" -o StrictHostKeyChecking=accept-new "$VPS_USER@$VPS_HOST" "BYBIT_KEY='$BYBIT_API_KEY' BYBIT_SECRET='$BYBIT_API_SECRET' TELEMETRY_PASS='$TELEMETRY_PASSWORD' bash -s" < deploy/deploy_vps.sh
           fi

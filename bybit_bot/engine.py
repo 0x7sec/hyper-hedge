@@ -604,14 +604,16 @@ class BybitTradingEngine:
         long_fill = self.service.place_market_open("Buy", long_size, position_idx=1, symbol=sym)
         time.sleep(0.3)
         pair.long_leg = PositionLeg.new_long(long_size, long_fill, sl_ratio, tp_ratio, symbol=sym, role=long_role)
-        self.service.set_trading_stop(1, pair.long_leg.trailing_sl, pair.long_leg.tp_target, symbol=sym)
+        if not pair.cfg.asymmetric:
+            self.service.set_trading_stop(1, pair.long_leg.trailing_sl, pair.long_leg.tp_target, symbol=sym)
         self._csv_event(pair, pair.long_leg, "ENTRY", long_fill)
 
         # Short leg
         short_fill = self.service.place_market_open("Sell", short_size, position_idx=2, symbol=sym)
         time.sleep(0.3)
         pair.short_leg = PositionLeg.new_short(short_size, short_fill, sl_ratio, tp_ratio, symbol=sym, role=short_role)
-        self.service.set_trading_stop(2, pair.short_leg.trailing_sl, pair.short_leg.tp_target, symbol=sym)
+        if not pair.cfg.asymmetric:
+            self.service.set_trading_stop(2, pair.short_leg.trailing_sl, pair.short_leg.tp_target, symbol=sym)
         self._csv_event(pair, pair.short_leg, "ENTRY", short_fill)
 
         pair.status = "ACTIVE"
@@ -696,7 +698,7 @@ class BybitTradingEngine:
                     s_fees = (entry_px + confirm_px) * c_qty * fee_rate
                     needed_be = abs(s_loss) + s_fees + (entry_px * base_qty * fee_rate * Decimal("2"))
                     long_sl_be = entry_px + (needed_be / base_qty)
-                    long_tp = confirm_px * (Decimal("1") + Decimal("1.00") * d_val)
+                    long_tp = entry_px * (Decimal("1") + Decimal("2.00") * d_val)
 
                     if pair.long_leg and pair.long_leg.status == "ACTIVE":
                         pair.long_leg.trailing_sl = long_sl_be
@@ -739,7 +741,7 @@ class BybitTradingEngine:
                     blend_px = pair.short_leg.entry_price if pair.short_leg else confirm_px
                     total_drain = abs(trapped_loss) + trapped_fees + upsize_fees + (base_qty * blend_px * fee_rate * Decimal("2"))
                     true_be = blend_px - (total_drain / base_qty)
-                    tp_level = confirm_px * (Decimal("1") - Decimal("2.50") * d_val)
+                    tp_level = entry_px * (Decimal("1") - Decimal("3.50") * d_val)
                     curr_sl = entry_px  # Initial SL placed at initial entry P0
 
                     if pair.short_leg and pair.short_leg.status == "ACTIVE":
@@ -776,7 +778,7 @@ class BybitTradingEngine:
                     l_fees = (entry_px + confirm_px) * c_qty * fee_rate
                     needed_be = abs(l_loss) + l_fees + (entry_px * base_qty * fee_rate * Decimal("2"))
                     short_sl_be = entry_px - (needed_be / base_qty)
-                    short_tp = confirm_px * (Decimal("1") - Decimal("1.00") * d_val)
+                    short_tp = entry_px * (Decimal("1") - Decimal("2.00") * d_val)
 
                     if pair.short_leg and pair.short_leg.status == "ACTIVE":
                         pair.short_leg.trailing_sl = short_sl_be
@@ -819,7 +821,7 @@ class BybitTradingEngine:
                     blend_px = pair.long_leg.entry_price if pair.long_leg else confirm_px
                     total_drain = abs(trapped_loss) + trapped_fees + upsize_fees + (base_qty * blend_px * fee_rate * Decimal("2"))
                     true_be = blend_px + (total_drain / base_qty)
-                    tp_level = confirm_px * (Decimal("1") + Decimal("2.50") * d_val)
+                    tp_level = entry_px * (Decimal("1") + Decimal("3.50") * d_val)
                     curr_sl = entry_px  # Initial SL placed at initial entry P0
 
                     if pair.long_leg and pair.long_leg.status == "ACTIVE":
@@ -843,10 +845,10 @@ class BybitTradingEngine:
         # -- PHASE 2: RUNNER B1 (Trend Expansion & Zero-Loss Pullback) ---------
         elif pair.phase == "RUNNER_B1":
             if pair.signal_direction == "bullish" and pair.long_leg and pair.long_leg.status == "ACTIVE":
-                # Ratchet Milestone: +1.40D reached -> Ratchet SL to BE + 1.0D
-                trail_trig = entry_px * (Decimal("1") + Decimal("1.40") * d_val)
+                # Ratchet Milestone: +1.50D reached -> Ratchet SL to P0 + 1.0D (+1.0D profit lock)
+                trail_trig = entry_px * (Decimal("1") + Decimal("1.50") * d_val)
                 if price >= trail_trig and not pair.b1_trailed:
-                    new_sl = pair.base_be_sl + (entry_px * d_val)
+                    new_sl = entry_px * (Decimal("1") + Decimal("1.00") * d_val)
                     pair.long_leg.trailing_sl = new_sl
                     pair.b1_trailed = True
                     self.service.set_trading_stop(1, pair.long_leg.trailing_sl, pair.long_leg.tp_target, symbol=sym)
@@ -874,10 +876,10 @@ class BybitTradingEngine:
                     return
 
             elif pair.signal_direction == "bearish" and pair.short_leg and pair.short_leg.status == "ACTIVE":
-                # Ratchet Milestone: -1.40D reached -> Ratchet SL to BE - 1.0D
-                trail_trig = entry_px * (Decimal("1") - Decimal("1.40") * d_val)
+                # Ratchet Milestone: -1.50D reached -> Ratchet SL to P0 - 1.0D (+1.0D profit lock)
+                trail_trig = entry_px * (Decimal("1") - Decimal("1.50") * d_val)
                 if price <= trail_trig and not pair.b1_trailed:
-                    new_sl = pair.base_be_sl - (entry_px * d_val)
+                    new_sl = entry_px * (Decimal("1") - Decimal("1.00") * d_val)
                     pair.short_leg.trailing_sl = new_sl
                     pair.b1_trailed = True
                     self.service.set_trading_stop(2, pair.short_leg.trailing_sl, pair.short_leg.tp_target, symbol=sym)
@@ -907,9 +909,9 @@ class BybitTradingEngine:
         # -- PHASE 3: RUNNER B2 (Size-Flip Trap Hunter) ------------------------
         elif pair.phase == "RUNNER_B2":
             if pair.signal_direction == "bullish" and pair.short_leg and pair.short_leg.status == "ACTIVE":
-                # Milestone 2: Reaches -3.0D -> Ratchet SL to +1.0D Profit Lock
-                ratchet_trig = pair.base_be_sl - (pair.short_leg.entry_price * Decimal("0.40") * d_val)
-                sl_ratchet = pair.base_be_sl - (pair.short_leg.entry_price * d_val)
+                # Milestone 2: Reaches -2.80D -> Ratchet SL to -2.30D (+1.0D Profit Lock above True BE)
+                ratchet_trig = entry_px * (Decimal("1") - Decimal("2.80") * d_val)
+                sl_ratchet = entry_px * (Decimal("1") - Decimal("2.30") * d_val)
                 if price <= ratchet_trig and not pair.b2_trailed_to_plus_1d:
                     pair.short_leg.trailing_sl = sl_ratchet
                     pair.b2_trailed_to_plus_1d = True
@@ -918,8 +920,8 @@ class BybitTradingEngine:
                     console.print(f"\n[bold green]>>> [{sym} SHORT B2 PROFIT RATCHET] SL lowered to {sl_ratchet:.2f} (+1.0D Locked) <<<[/bold green]")
                     self._csv_event(pair, pair.short_leg, "B2_RATCHET_PROFIT", price)
 
-                # Milestone 1: Reaches -2.0D -> True Breakeven Lock (Zero Loss Secured)
-                elif price <= pair.base_be_sl and not pair.b2_trailed_to_be:
+                # Milestone 1: Extends past True BE (-2.20D) -> Lock True BE (Zero Loss Secured)
+                elif price <= pair.base_be_sl - (entry_px * Decimal("0.20") * d_val) and not pair.b2_trailed_to_be:
                     pair.short_leg.trailing_sl = pair.base_be_sl
                     pair.b2_trailed_to_be = True
                     self.service.set_trading_stop(2, pair.short_leg.trailing_sl, pair.short_leg.tp_target, symbol=sym)
@@ -947,9 +949,9 @@ class BybitTradingEngine:
                     return
 
             elif pair.signal_direction == "bearish" and pair.long_leg and pair.long_leg.status == "ACTIVE":
-                # Milestone 2: Reaches +3.0D -> Ratchet SL to +1.0D Profit Lock
-                ratchet_trig = pair.base_be_sl + (pair.long_leg.entry_price * Decimal("0.40") * d_val)
-                sl_ratchet = pair.base_be_sl + (pair.long_leg.entry_price * d_val)
+                # Milestone 2: Reaches +2.80D -> Ratchet SL to +2.30D (+1.0D Profit Lock above True BE)
+                ratchet_trig = entry_px * (Decimal("1") + Decimal("2.80") * d_val)
+                sl_ratchet = entry_px * (Decimal("1") + Decimal("2.30") * d_val)
                 if price >= ratchet_trig and not pair.b2_trailed_to_plus_1d:
                     pair.long_leg.trailing_sl = sl_ratchet
                     pair.b2_trailed_to_plus_1d = True
@@ -958,8 +960,8 @@ class BybitTradingEngine:
                     console.print(f"\n[bold green]>>> [{sym} LONG B2 PROFIT RATCHET] SL raised to {sl_ratchet:.2f} (+1.0D Locked) <<<[/bold green]")
                     self._csv_event(pair, pair.long_leg, "B2_RATCHET_PROFIT", price)
 
-                # Milestone 1: Reaches +2.0D -> True Breakeven Lock (Zero Loss Secured)
-                elif price >= pair.base_be_sl and not pair.b2_trailed_to_be:
+                # Milestone 1: Extends past True BE (+2.20D) -> Lock True BE (Zero Loss Secured)
+                elif price >= pair.base_be_sl + (entry_px * Decimal("0.20") * d_val) and not pair.b2_trailed_to_be:
                     pair.long_leg.trailing_sl = pair.base_be_sl
                     pair.b2_trailed_to_be = True
                     self.service.set_trading_stop(1, pair.long_leg.trailing_sl, pair.long_leg.tp_target, symbol=sym)
@@ -1169,7 +1171,8 @@ class BybitTradingEngine:
                             logger.info(f"[{sym}] LONG hit TP -> Closed counter SHORT immediately to secure net gains.")
                             self.service.close_position(2, pair.short_leg.size, symbol=sym)
                     else:
-                        self._apply_be_lock_short(pair, px)
+                        if not pair.cfg.asymmetric:
+                            self._apply_be_lock_short(pair, px)
 
                 if pair.short_leg and pair.short_leg.status == "ACTIVE" and 2 not in active_indices:
                     logger.info(f"[{sym}] Exchange confirms SHORT closed.")
@@ -1197,7 +1200,8 @@ class BybitTradingEngine:
                             logger.info(f"[{sym}] SHORT hit TP -> Closed counter LONG immediately to secure net gains.")
                             self.service.close_position(1, pair.long_leg.size, symbol=sym)
                     else:
-                        self._apply_be_lock_long(pair, px)
+                        if not pair.cfg.asymmetric:
+                            self._apply_be_lock_long(pair, px)
 
                 # Check if cycle ended
                 l_done = pair.long_leg is None or pair.long_leg.status != "ACTIVE"

@@ -18,7 +18,9 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "adx_period": 14,
         "d_pct": Decimal("0.70"),
         "sl_pct": Decimal("0.34"),  # Base Zero-Loss SL = +0.48D
-        "tp_pct": Decimal("1.40"),  # Full Take-Profit = +2.0D
+        "tp_pct": Decimal("1.40"),  # Branch 1 Take-Profit = +2.0D
+        "b1_tp_mult": Decimal("2.00"),
+        "b2_tp_mult": Decimal("3.50"),  # 3.5D Take-Profit on Branch 2 for BTC
         "ratchet_step_pct": Decimal("0.25"),
         "be_lock": True,
         "be_buffer_pct": Decimal("0.34"),
@@ -35,7 +37,9 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "adx_period": 14,
         "d_pct": Decimal("0.80"),
         "sl_pct": Decimal("0.38"),  # Base Zero-Loss SL = +0.48D
-        "tp_pct": Decimal("1.60"),  # Full Take-Profit = +2.0D
+        "tp_pct": Decimal("1.60"),  # Branch 1 Take-Profit = +2.0D
+        "b1_tp_mult": Decimal("2.00"),
+        "b2_tp_mult": Decimal("3.00"),  # 3.0D Take-Profit on Branch 2 for ETH
         "ratchet_step_pct": Decimal("0.25"),
         "be_lock": True,
         "be_buffer_pct": Decimal("0.38"),
@@ -52,7 +56,9 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "adx_period": 14,
         "d_pct": Decimal("0.80"),
         "sl_pct": Decimal("0.38"),  # Base Zero-Loss SL = +0.48D
-        "tp_pct": Decimal("1.60"),  # Full Take-Profit = +2.0D
+        "tp_pct": Decimal("1.60"),  # Branch 1 Take-Profit = +2.0D
+        "b1_tp_mult": Decimal("2.00"),
+        "b2_tp_mult": Decimal("3.50"),  # 3.5D Take-Profit on Branch 2 for SOL
         "ratchet_step_pct": Decimal("0.25"),
         "be_lock": True,
         "be_buffer_pct": Decimal("0.38"),
@@ -70,6 +76,8 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "d_pct": Decimal("0.40"),
         "sl_pct": Decimal("0.40"),
         "tp_pct": Decimal("1.20"),
+        "b1_tp_mult": Decimal("2.00"),
+        "b2_tp_mult": Decimal("3.00"),
         "ratchet_step_pct": Decimal("0.25"),
         "be_lock": True,
         "be_buffer_pct": Decimal("0.20"),
@@ -92,6 +100,8 @@ class SymbolConfig:
     d_pct: Decimal = Decimal("0.80")
     sl_pct: Decimal = Decimal("0.38")
     tp_pct: Decimal = Decimal("1.60")
+    b1_tp_mult: Decimal = Decimal("2.00")
+    b2_tp_mult: Decimal = Decimal("3.50")
     ratchet_step_pct: Decimal = Decimal("0.25")
     be_lock: bool = True
     be_buffer_pct: Decimal = Decimal("0.38")
@@ -123,6 +133,12 @@ class SymbolConfig:
                 except Exception: pass
             if os.getenv(f"{pfx}TP_PCT"):
                 try: params["tp_pct"] = Decimal(os.getenv(f"{pfx}TP_PCT"))
+                except Exception: pass
+            if os.getenv(f"{pfx}B1_TP_MULT"):
+                try: params["b1_tp_mult"] = Decimal(os.getenv(f"{pfx}B1_TP_MULT"))
+                except Exception: pass
+            if os.getenv(f"{pfx}B2_TP_MULT"):
+                try: params["b2_tp_mult"] = Decimal(os.getenv(f"{pfx}B2_TP_MULT"))
                 except Exception: pass
             if os.getenv(f"{pfx}EMA_FAST"):
                 try: params["ema_fast"] = int(os.getenv(f"{pfx}EMA_FAST"))

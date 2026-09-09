@@ -790,7 +790,7 @@ class BybitTradingEngine:
                     s_fees = (entry_px + confirm_px) * c_qty * fee_rate
                     needed_be = abs(s_loss) + s_fees + (entry_px * base_qty * fee_rate * Decimal("2"))
                     long_sl_be = entry_px + (needed_be / base_qty)
-                    long_tp = entry_px * (Decimal("1") + Decimal("2.00") * d_val)
+                    long_tp = entry_px * (Decimal("1") + pair.cfg.b1_tp_mult * d_val)
 
                     if pair.long_leg and pair.long_leg.status == "ACTIVE":
                         pair.long_leg.trailing_sl = long_sl_be
@@ -838,7 +838,7 @@ class BybitTradingEngine:
                     blend_px = pair.short_leg.entry_price if pair.short_leg else confirm_px
                     total_drain = abs(trapped_loss) + trapped_fees + upsize_fees + (base_qty * blend_px * fee_rate * Decimal("2"))
                     true_be = blend_px - (total_drain / base_qty)
-                    tp_level = entry_px * (Decimal("1") - Decimal("2.00") * d_val)
+                    tp_level = entry_px * (Decimal("1") - pair.cfg.b2_tp_mult * d_val)
                     curr_sl = entry_px  # Initial SL placed at initial entry P0
 
                     if pair.short_leg and pair.short_leg.status == "ACTIVE":
@@ -875,7 +875,7 @@ class BybitTradingEngine:
                     l_fees = (entry_px + confirm_px) * c_qty * fee_rate
                     needed_be = abs(l_loss) + l_fees + (entry_px * base_qty * fee_rate * Decimal("2"))
                     short_sl_be = entry_px - (needed_be / base_qty)
-                    short_tp = entry_px * (Decimal("1") - Decimal("2.00") * d_val)
+                    short_tp = entry_px * (Decimal("1") - pair.cfg.b1_tp_mult * d_val)
 
                     if pair.short_leg and pair.short_leg.status == "ACTIVE":
                         pair.short_leg.trailing_sl = short_sl_be
@@ -923,7 +923,7 @@ class BybitTradingEngine:
                     blend_px = pair.long_leg.entry_price if pair.long_leg else confirm_px
                     total_drain = abs(trapped_loss) + trapped_fees + upsize_fees + (base_qty * blend_px * fee_rate * Decimal("2"))
                     true_be = blend_px + (total_drain / base_qty)
-                    tp_level = entry_px * (Decimal("1") + Decimal("2.00") * d_val)
+                    tp_level = entry_px * (Decimal("1") + pair.cfg.b2_tp_mult * d_val)
                     curr_sl = entry_px  # Initial SL placed at initial entry P0
 
                     if pair.long_leg and pair.long_leg.status == "ACTIVE":
@@ -1029,9 +1029,9 @@ class BybitTradingEngine:
                     console.print(f"\n[bold green]>>> [{sym} SHORT B2 TRUE BE LOCK] SL set to {pair.base_be_sl:.2f} (Zero Loss Secured) <<<[/bold green]")
                     self._csv_event(pair, pair.short_leg, "B2_RATCHET_BE", price)
 
-                # TP Hit (-2.0D Target)
+                # TP Hit (B2 Target)
                 if price <= pair.short_leg.tp_target:
-                    console.print(f"\n[bold green]>>> [{sym} SHORT B2 TP HIT] @ {price:.2f} <<<[/bold green]")
+                    console.print(f"\n[bold green]>>> [{sym} SHORT B2 TP HIT ({pair.cfg.b2_tp_mult}D)] @ {price:.2f} <<<[/bold green]")
                     self.service.close_position(2, pair.short_leg.size, symbol=sym)
                     pair.short_leg.status = "CLOSED_TP"
                     pair.short_leg.exit_price = price
@@ -1069,9 +1069,9 @@ class BybitTradingEngine:
                     console.print(f"\n[bold green]>>> [{sym} LONG B2 TRUE BE LOCK] SL set to {pair.base_be_sl:.2f} (Zero Loss Secured) <<<[/bold green]")
                     self._csv_event(pair, pair.long_leg, "B2_RATCHET_BE", price)
 
-                # TP Hit (+2.0D Target)
+                # TP Hit (B2 Target)
                 if price >= pair.long_leg.tp_target:
-                    console.print(f"\n[bold green]>>> [{sym} LONG B2 TP HIT] @ {price:.2f} <<<[/bold green]")
+                    console.print(f"\n[bold green]>>> [{sym} LONG B2 TP HIT ({pair.cfg.b2_tp_mult}D)] @ {price:.2f} <<<[/bold green]")
                     self.service.close_position(1, pair.long_leg.size, symbol=sym)
                     pair.long_leg.status = "CLOSED_TP"
                     pair.long_leg.exit_price = price

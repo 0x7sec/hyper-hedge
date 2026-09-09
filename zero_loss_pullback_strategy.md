@@ -250,7 +250,7 @@ To evaluate the exact quantitative tradeoff between **conservative flat capital 
 
 | Branch 2 TP Target | BTCUSDT Net ($) | ETHUSDT Net ($) | SOLUSDT Net ($) | Combined Portfolio Net ($) | Portfolio Profit Factor | Operational / Strategic Profile |
 | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
-| **2.0D (Active Setup)** | **-$239.21** | **+$14.71** | **+$157.90** | **-$66.60** | **0.99** | **Pure True Breakeven / Flat Recycler** |
+| **2.0D (Flat Shield)** | -$239.21 | +$14.71 | +$157.90 | **-$66.60** | **0.99** | **Pure True Breakeven / Flat Recycler** |
 | **2.2D** | -$64.20 | +$133.04 | +$413.92 | **+$482.77** | **1.06** | **Breakeven + Exchange Fee Cushion** |
 | **2.5D** | +$46.76 | +$203.67 | +$598.60 | **+$849.03** | **1.18** | **Moderate Expansion Harvest** |
 | **3.0D** | +$15.74 | +$427.11 | +$796.68 | **+$1,239.52** | **1.34** | **Substantial Expansion Harvest** |
@@ -258,7 +258,27 @@ To evaluate the exact quantitative tradeoff between **conservative flat capital 
 
 ---
 
-### 5.3 Key Takeaways from the Data
+### 5.3 Champion Production Setup: 3.5D for BTC & SOL, 3.0D for ETH
+
+Based on empirical volatility dynamics where Bitcoin and Solana exhibit strong extended runs (+3.5D) while Ethereum achieves optimal efficiency and lower whipsaws at +3.0D, the champion production configuration deploys asset-tailored targets:
+
+| Performance Metric | BTCUSDT (60m, 3.5D) | ETHUSDT (60m, 3.0D) | SOLUSDT (60m, 3.5D) | Tailored Production Portfolio |
+| :--- | :---: | :---: | :---: | :---: |
+| **Branch 1 Target** | **2.00×D** | **2.00×D** | **2.00×D** | **Consistent 2.0D Alpha Engine** |
+| **Branch 2 Target** | **3.50×D** | **3.00×D** | **3.50×D** | **Asset-Tailored Expansion Targets** |
+| **Branch 1 Net Profit ($)** | +$1,708.23 | +$2,270.36 | +$2,545.92 | **+$6,524.51 (100% Win Rate)** |
+| **Branch 2 Net Profit ($)** | -$1,514.46 | -$1,843.25 | -$1,521.88 | **-$4,879.59 (Recovers +$1,883 vs 2.0D)**|
+| **Branch 3 Timeouts** | 1 Cycle (-$6.92) | 0 ($0.00) | 0 ($0.00) | **1 Cycle (-$6.92)** |
+| **Total Realized Net Profit ($)** | **+$186.84** | **+$427.11** | **+$1,024.05** | **+$1,638.00 Net Realized Profit** |
+| **Profit Factor (PF)** | **1.11** | **1.21** | **1.58** | **1.30 Overall Portfolio PF** |
+| **Maximum Drawdown** | $377.79 | $360.13 | $188.87 | **$377.79 Peak-to-Trough Drawdown** |
+| **Completed Cycles** | 185 | 200 | 212 | **597 Trade Cycles** |
+| **Payoff Outcomes** | 83 TP / 37 Trail / 32 BE / 32 Whip | 111 TP / 31 Trail / 29 BE / 29 Whip | 111 TP / 37 Trail / 39 BE / 25 Whip | **305 TP / 105 Trail / 100 BE / 86 Whip** |
+| **Effective Capital Shield Rate** | **82.7%** | **85.5%** | **88.2%** | **85.6% Profitable or Flat** |
+
+---
+
+### 5.4 Key Takeaways from the Data
 
 1. **Branch 1 Generates Exceptional Consistent Alpha**:
    * Across all three assets, Branch 1 printed **+$6,702.79 Net Realized Profit** across 343 cycles with **100% win/breakeven rate** (zero losing cycles).

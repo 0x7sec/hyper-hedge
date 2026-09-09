@@ -242,7 +242,11 @@ class BybitService:
     # -- Order execution -------------------------------------------------------
 
     def place_market_open(self, side: str, qty: Decimal, position_idx: int, symbol: Optional[str] = None) -> Decimal:
-        """Place market entry order."""
+        """
+        Place market entry or upsize order with fill verification and marketable Limit fallback.
+        Ensures partial fills and orderbook liquidity rejections (EC_NoImmediateQtyToFill)
+        are retried and verified via exchange position size.
+        """
         sym = symbol if symbol else self.config.symbol
         current_px = self.get_market_price(sym)
         qty_str    = self.round_qty(qty, sym)
@@ -253,30 +257,81 @@ class BybitService:
             )
             return current_px
 
-        logger.info(f"Placing Market {side.upper()} {qty_str} {sym} (positionIdx={position_idx})...")
-        try:
-            res = self.session.place_order(
-                category="linear",
-                symbol=sym,
-                side=side,
-                orderType="Market",
-                qty=qty_str,
-                positionIdx=position_idx,
-            )
-            if res.get("retCode") != 0:
-                raise RuntimeError(f"Order failed on {sym}: {res.get('retMsg')} (code {res.get('retCode')})")
-            logger.info(f"[{sym}] Order filled. ID: {res['result'].get('orderId')}")
-            return current_px
-        except Exception as e:
-            if "110123" in str(e):
-                logger.error(
-                    f"\n{'='*70}\n"
-                    f"[BYBIT CONTRACT TERMS REQUIRED (Error 110123)]\n"
-                    f"Visit: https://{'testnet.' if self.config.testnet else ''}bybit.com/trade/usdt/{sym}\n"
-                    f"Accept the one-time trading terms popup, then restart.\n"
-                    f"{'='*70}"
+        start_size = self.get_position_size(position_idx, sym)
+        target_size = start_size + qty
+        rem_qty = qty
+        max_attempts = 3
+
+        for attempt in range(1, max_attempts + 1):
+            current_px = self.get_market_price(sym)
+            qty_str = self.round_qty(rem_qty, sym)
+            if Decimal(qty_str) <= Decimal("0"):
+                break
+
+            if attempt == 1:
+                logger.info(f"[{sym}] Opening/Upsizing positionIdx={position_idx} (Attempt {attempt}/{max_attempts}): Market {side.upper()} {qty_str}...")
+                try:
+                    res = self.session.place_order(
+                        category="linear",
+                        symbol=sym,
+                        side=side,
+                        orderType="Market",
+                        qty=qty_str,
+                        positionIdx=position_idx,
+                    )
+                    if res.get("retCode") != 0:
+                        logger.warning(f"[{sym}] Market order error: {res.get('retMsg')} (code {res.get('retCode')})")
+                    else:
+                        logger.info(f"[{sym}] Market order placed. ID: {res['result'].get('orderId')}")
+                except Exception as e:
+                    if "110123" in str(e):
+                        logger.error(
+                            f"\n{'='*70}\n"
+                            f"[BYBIT CONTRACT TERMS REQUIRED (Error 110123)]\n"
+                            f"Visit: https://{'testnet.' if self.config.testnet else ''}bybit.com/trade/usdt/{sym}\n"
+                            f"Accept the one-time trading terms popup, then restart.\n"
+                            f"{'='*70}"
+                        )
+                    logger.warning(f"[{sym}] Market order exception: {e}")
+            else:
+                # Marketable Limit order crossing spread by 0.5% with GTC
+                slip = Decimal("1.005") if side.lower() == "buy" else Decimal("0.995")
+                limit_px = self.round_price(current_px * slip, sym)
+                logger.info(
+                    f"[{sym}] Upsize retry positionIdx={position_idx} (Attempt {attempt}/{max_attempts}): "
+                    f"Marketable Limit GTC {side.upper()} {qty_str} @ {limit_px}..."
                 )
-            raise RuntimeError(f"Order error on {sym}: {getattr(e, 'message', e)}")
+                try:
+                    res = self.session.place_order(
+                        category="linear",
+                        symbol=sym,
+                        side=side,
+                        orderType="Limit",
+                        price=limit_px,
+                        qty=qty_str,
+                        timeInForce="GTC",
+                        positionIdx=position_idx,
+                    )
+                    if res.get("retCode") != 0:
+                        logger.warning(f"[{sym}] Limit order error: {res.get('retMsg')} (code {res.get('retCode')})")
+                    else:
+                        logger.info(f"[{sym}] Marketable limit placed. ID: {res['result'].get('orderId')}")
+                except Exception as e:
+                    logger.warning(f"[{sym}] Limit order exception: {e}")
+
+            time.sleep(0.5)
+            actual_size = self.get_position_size(position_idx, sym)
+            filled_so_far = actual_size - start_size
+            if actual_size >= target_size or filled_so_far >= qty:
+                logger.info(f"[{sym}] REST verification SUCCESS: positionIdx={position_idx} reached target size {actual_size}.")
+                return current_px
+
+            rem_qty = qty - filled_so_far
+            logger.warning(f"[{sym}] Incomplete fill (filled {filled_so_far}/{qty}). Remaining {rem_qty}. Retrying...")
+
+        final_size = self.get_position_size(position_idx, sym)
+        logger.info(f"[{sym}] Final position size on exchange: {final_size}")
+        return current_px
 
     def set_trading_stop(
         self,

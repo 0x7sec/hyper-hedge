@@ -33,7 +33,7 @@ CANDLE_CACHE = {}
 CANDLE_CACHE_TTL = 8.0  # seconds
 
 
-def fetch_candles_with_indicators(symbol: str, interval: str = "60", limit: int = 40) -> dict:
+def fetch_candles_with_indicators(symbol: str, interval: str = "60", limit: int = 80) -> dict:
     """Fetch recent klines from Bybit linear API and compute EMA9, EMA21, ADX, and % change."""
     cache_key = (symbol, str(interval), limit)
     now = time.time()
@@ -533,7 +533,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
     def _handle_api_candles(self, qs: dict):
         sym = qs.get("symbol", ["BTCUSDT"])[0].upper()
         interval = qs.get("interval", ["60"])[0]
-        limit = int(qs.get("limit", [40])[0])
+        limit = int(qs.get("limit", [80])[0])
         data = fetch_candles_with_indicators(sym, interval=interval, limit=limit)
         self._send_json(data)
 
@@ -726,6 +726,11 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                   <button class="tf-btn active" data-tf="60" onclick="changeChartTf('{sym}', '60')">1h</button>
                   <button class="tf-btn" data-tf="240" onclick="changeChartTf('{sym}', '240')">4h</button>
                   <button class="tf-btn" data-tf="D" onclick="changeChartTf('{sym}', 'D')">1D</button>
+                </div>
+                <div class="zoom-pills">
+                  <button class="zoom-btn" onclick="zoomChart('{sym}', -6)" title="Zoom In (+)">➕</button>
+                  <button class="zoom-btn" onclick="zoomChart('{sym}', 6)" title="Zoom Out (−)">➖</button>
+                  <button class="zoom-btn" onclick="resetZoom('{sym}')" title="Reset Zoom & Pan">⟲</button>
                 </div>
                 <div class="chart-legend">
                   <span class="legend-item"><span class="legend-dot" style="background:#38bdf8;"></span>EMA9</span>
@@ -998,6 +1003,32 @@ class TelemetryHandler(BaseHTTPRequestHandler):
       background: #1e293b;
       color: #38bdf8;
       box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+    }}
+    .zoom-pills {{
+      display: flex;
+      gap: 2px;
+      background: #090e1a;
+      padding: 2px;
+      border-radius: 6px;
+      border: 1px solid #1e293b;
+    }}
+    .zoom-btn {{
+      background: transparent;
+      border: none;
+      color: #94a3b8;
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 5px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }}
+    .zoom-btn:hover {{
+      color: #38bdf8;
+      background: rgba(56, 189, 248, 0.15);
     }}
     .chart-legend {{
       display: flex;
@@ -1325,6 +1356,32 @@ class TelemetryHandler(BaseHTTPRequestHandler):
   <script>
     const activeTfs = {{}};
     const chartData = {{}};
+    const chartZoom = {{}}; // sym -> {{ count: 35, offset: 0 }}
+
+    function getZoomConfig(sym, total) {{
+      if (!chartZoom[sym]) {{
+        chartZoom[sym] = {{ count: Math.min(35, total || 35), offset: 0 }};
+      }}
+      return chartZoom[sym];
+    }}
+
+    function zoomChart(sym, delta) {{
+      const data = chartData[sym];
+      if (!data || !data.candles) return;
+      const total = data.candles.length;
+      const cfg = getZoomConfig(sym, total);
+      cfg.count = Math.max(10, Math.min(total, cfg.count + delta));
+      cfg.offset = Math.max(0, Math.min(total - cfg.count, cfg.offset));
+      renderCanvasChart(sym, data);
+    }}
+
+    function resetZoom(sym) {{
+      const data = chartData[sym];
+      if (!data || !data.candles) return;
+      const total = data.candles.length;
+      chartZoom[sym] = {{ count: Math.min(35, total), offset: 0 }};
+      renderCanvasChart(sym, data);
+    }}
 
     function initCharts() {{
       const cards = document.querySelectorAll('.market-card');
@@ -1357,7 +1414,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
     async function loadChart(sym, tf) {{
       const info = document.getElementById('info-' + sym);
       try {{
-        const res = await fetch(`/api/candles?symbol=${{sym}}&interval=${{tf}}&limit=40`);
+        const res = await fetch(`/api/candles?symbol=${{sym}}&interval=${{tf}}&limit=80`);
         if (!res.ok) throw new Error('API error');
         const data = await res.json();
         if (!data.candles || data.candles.length === 0) {{
@@ -1396,8 +1453,16 @@ class TelemetryHandler(BaseHTTPRequestHandler):
       ctx.resetTransform();
       ctx.scale(dpr, dpr);
 
-      const candles = data.candles;
-      if (!candles || candles.length === 0) return;
+      const allCandles = data.candles;
+      if (!allCandles || allCandles.length === 0) return;
+
+      const total = allCandles.length;
+      const cfg = getZoomConfig(sym, total);
+      const count = Math.max(10, Math.min(total, cfg.count));
+      const offset = Math.max(0, Math.min(total - count, cfg.offset));
+      const startIdx = total - offset - count;
+      const endIdx = total - offset;
+      const candles = allCandles.slice(startIdx, endIdx);
 
       const topH = Math.floor(h * 0.70);
       const botH = h - topH;
@@ -1458,25 +1523,23 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         const col = isUp ? '#10b981' : '#ef4444';
 
         ctx.strokeStyle = col;
-        ctx.fillStyle = col;
-
-        // Wick
         ctx.lineWidth = 1.2;
         ctx.beginPath();
         ctx.moveTo(cx, yP(c.h));
         ctx.lineTo(cx, yP(c.l));
         ctx.stroke();
 
-        // Body
-        const bodyTop = Math.min(yP(c.o), yP(c.c));
-        const bodyH = Math.max(1.5, Math.abs(yP(c.c) - yP(c.o)));
+        const yOpen = yP(c.o);
+        const yClose = yP(c.c);
+        const bodyTop = Math.min(yOpen, yClose);
+        const bodyH = Math.max(1.5, Math.abs(yOpen - yClose));
+        ctx.fillStyle = col;
         ctx.fillRect(cx - candleW / 2, bodyTop, candleW, bodyH);
       }});
 
-      // 3. Draw EMA 9 line (Sky Blue)
+      // 3. Draw EMA 9 line (Cyan)
       ctx.strokeStyle = '#38bdf8';
-      ctx.lineWidth = 1.8;
-      ctx.lineJoin = 'round';
+      ctx.lineWidth = 1.6;
       ctx.beginPath();
       let started = false;
       candles.forEach((c, i) => {{
@@ -1489,9 +1552,9 @@ class TelemetryHandler(BaseHTTPRequestHandler):
       }});
       ctx.stroke();
 
-      // 4. Draw EMA 21 line (Amber)
+      // 4. Draw EMA 21 line (Orange)
       ctx.strokeStyle = '#f59e0b';
-      ctx.lineWidth = 1.8;
+      ctx.lineWidth = 1.6;
       ctx.beginPath();
       started = false;
       candles.forEach((c, i) => {{
@@ -1546,8 +1609,9 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         const f9 = sel.ema9 ? sel.ema9.toFixed(1) : '--';
         const f21 = sel.ema21 ? sel.ema21.toFixed(1) : '--';
         const ax = sel.adx ? sel.adx.toFixed(1) : '--';
-        info.innerHTML = `<span><b>${{sel.ts}}</b> <b style="color:${{dirCol}}">C:${{sel.c}}</b> O:${{sel.o}} H:${{sel.h}} L:${{sel.l}}</span>` +
-                         `<span><b style="color:#38bdf8">EMA9:${{f9}}</b> <b style="color:#f59e0b">EMA21:${{f21}}</b> <b style="color:#a855f7">ADX:${{ax}}</b></span>`;
+        const panned = offset > 0 ? `<b style="color:#f59e0b">PAST(-${{offset}})</b> ` : '';
+        info.innerHTML = `<span>${{panned}}<b>${{sel.ts}}</b> <b style="color:${{dirCol}}">C:${{sel.c}}</b> O:${{sel.o}} H:${{sel.h}} L:${{sel.l}}</span>` +
+                         `<span><b style="color:#38bdf8">EMA9:${{f9}}</b> <b style="color:#f59e0b">EMA21:${{f21}}</b> <b style="color:#a855f7">ADX:${{ax}}</b> <small style="color:#64748b;">[${{n}}b ↕zoom↔pan]</small></span>`;
       }}
 
       if (hoverIdx >= 0 && hoverIdx < n) {{
@@ -1567,26 +1631,93 @@ class TelemetryHandler(BaseHTTPRequestHandler):
       const canvas = document.getElementById('chart-' + sym);
       if (!canvas) return;
 
-      function handleMove(e) {{
+      let isDragging = false;
+      let dragStartX = 0;
+      let dragStartOffset = 0;
+
+      // 1. Mouse wheel zoom
+      canvas.addEventListener('wheel', (e) => {{
+        e.preventDefault();
+        zoomChart(sym, e.deltaY > 0 ? 5 : -5);
+      }}, {{ passive: false }});
+
+      // 2. Click & drag to pan
+      canvas.addEventListener('mousedown', (e) => {{
+        if (e.button !== 0) return;
+        isDragging = true;
+        dragStartX = e.clientX;
+        const total = chartData[sym]?.candles?.length || 35;
+        dragStartOffset = getZoomConfig(sym, total).offset;
+        canvas.style.cursor = 'grabbing';
+      }});
+
+      window.addEventListener('mouseup', () => {{
+        if (isDragging) {{
+          isDragging = false;
+          canvas.style.cursor = 'crosshair';
+        }}
+      }});
+
+      canvas.addEventListener('mousemove', (e) => {{
         const data = chartData[sym];
         if (!data || !data.candles) return;
+        const total = data.candles.length;
+        const cfg = getZoomConfig(sym, total);
         const rect = canvas.getBoundingClientRect();
-        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-        const x = clientX - rect.left;
         const plotW = rect.width - 48;
-        const idx = Math.floor((x / plotW) * data.candles.length);
-        renderCanvasChart(sym, data, Math.max(0, Math.min(data.candles.length - 1, idx)));
-      }}
+        const slotW = plotW / cfg.count;
 
-      function handleLeave() {{
+        if (isDragging) {{
+          const deltaX = e.clientX - dragStartX;
+          const shift = Math.round(deltaX / Math.max(4, slotW));
+          cfg.offset = Math.max(0, Math.min(total - cfg.count, dragStartOffset + shift));
+          renderCanvasChart(sym, data);
+          return;
+        }}
+
+        const x = e.clientX - rect.left;
+        const idx = Math.floor((x / plotW) * cfg.count);
+        renderCanvasChart(sym, data, Math.max(0, Math.min(cfg.count - 1, idx)));
+      }});
+
+      canvas.addEventListener('mouseleave', () => {{
+        if (!isDragging) {{
+          const data = chartData[sym];
+          if (data) renderCanvasChart(sym, data, -1);
+        }}
+      }});
+
+      // 3. Touch support (drag & pan)
+      let touchStartX = 0;
+      let touchStartOffset = 0;
+      canvas.addEventListener('touchstart', (e) => {{
+        if (e.touches.length === 1) {{
+          touchStartX = e.touches[0].clientX;
+          const total = chartData[sym]?.candles?.length || 35;
+          touchStartOffset = getZoomConfig(sym, total).offset;
+        }}
+      }}, {{ passive: true }});
+
+      canvas.addEventListener('touchmove', (e) => {{
+        const data = chartData[sym];
+        if (!data || !data.candles || e.touches.length !== 1) return;
+        const total = data.candles.length;
+        const cfg = getZoomConfig(sym, total);
+        const rect = canvas.getBoundingClientRect();
+        const plotW = rect.width - 48;
+        const slotW = plotW / cfg.count;
+        const deltaX = e.touches[0].clientX - touchStartX;
+        if (Math.abs(deltaX) > 8) {{
+          const shift = Math.round(deltaX / Math.max(4, slotW));
+          cfg.offset = Math.max(0, Math.min(total - cfg.count, touchStartOffset + shift));
+          renderCanvasChart(sym, data);
+        }}
+      }}, {{ passive: true }});
+
+      canvas.addEventListener('touchend', () => {{
         const data = chartData[sym];
         if (data) renderCanvasChart(sym, data, -1);
-      }}
-
-      canvas.addEventListener('mousemove', handleMove);
-      canvas.addEventListener('touchmove', handleMove, {{ passive: true }});
-      canvas.addEventListener('mouseleave', handleLeave);
-      canvas.addEventListener('touchend', handleLeave);
+      }});
     }}
 
     // Initialize charts on window load

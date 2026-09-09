@@ -819,10 +819,15 @@ class BybitTradingEngine:
                         self._csv_event(pair, pair.long_leg, "B2_COLLAPSE_PRIMARY", confirm_px)
 
                     # 2. Size-Flip: Add +70% to Counter Short Leg to make 100% Runner
-                    add_qty = base_qty - (pair.short_leg.size if pair.short_leg else c_qty)
+                    prev_short_size = pair.short_leg.size if pair.short_leg else c_qty
+                    add_qty = base_qty - prev_short_size
                     add_fill = self.service.place_market_open("Sell", add_qty, position_idx=2, symbol=sym)
+                    actual_short_size = self.service.get_position_size(2, symbol=sym)
+                    actual_added = max(Decimal("0"), actual_short_size - prev_short_size)
                     if pair.short_leg:
-                        pair.short_leg.upsize(add_qty, add_fill)
+                        pair.short_leg.upsize(actual_added, add_fill)
+                        if actual_short_size > Decimal("0"):
+                            pair.short_leg.size = actual_short_size
                         pair.short_leg.role = "PRIMARY"
 
                     # 3. Compute B2 Levels
@@ -899,10 +904,15 @@ class BybitTradingEngine:
                         self._csv_event(pair, pair.short_leg, "B2_COLLAPSE_PRIMARY", confirm_px)
 
                     # 2. Size-Flip: Add +70% to Counter Long Leg to make 100% Runner
-                    add_qty = base_qty - (pair.long_leg.size if pair.long_leg else c_qty)
+                    prev_long_size = pair.long_leg.size if pair.long_leg else c_qty
+                    add_qty = base_qty - prev_long_size
                     add_fill = self.service.place_market_open("Buy", add_qty, position_idx=1, symbol=sym)
+                    actual_long_size = self.service.get_position_size(1, symbol=sym)
+                    actual_added = max(Decimal("0"), actual_long_size - prev_long_size)
                     if pair.long_leg:
-                        pair.long_leg.upsize(add_qty, add_fill)
+                        pair.long_leg.upsize(actual_added, add_fill)
+                        if actual_long_size > Decimal("0"):
+                            pair.long_leg.size = actual_long_size
                         pair.long_leg.role = "PRIMARY"
 
                     # 3. Compute B2 Levels

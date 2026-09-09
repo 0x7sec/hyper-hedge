@@ -45,10 +45,8 @@ else
 fi
 
 cd "$APP_DIR"
-# Purge prior trade records and old logs
-echo "Purging old trade history ledger and vacuuming logs..."
-rm -f "$APP_DIR/bybit_trades.csv" "$APP_DIR/bot_state.json" || true
-$SUDO journalctl --vacuum-time=1s 2>/dev/null || true
+# Keep existing trade records ledger intact across updates
+echo "Preserving trade history ledger..."
 echo "=== [3/6] Setting Up Python Virtual Environment ==="
 if [ ! -d "venv" ]; then
   python3 -m venv venv

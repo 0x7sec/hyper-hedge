@@ -237,6 +237,43 @@ class BybitTradingEngine:
                     pair.status = "ACTIVE"
                     logger.info(f"[{sym}] Reconnected SHORT {size} @ {entry} (SL: {pair.short_leg.trailing_sl}, TP: {pair.short_leg.tp_target})")
 
+            # Reconstruct Path B state for reconnected active pairs
+            for sym, pair in self.pairs.items():
+                if pair.status == "ACTIVE":
+                    l_act = pair.long_leg and pair.long_leg.status == "ACTIVE"
+                    s_act = pair.short_leg and pair.short_leg.status == "ACTIVE"
+                    if l_act and s_act:
+                        pair.phase = "INCUBATION" if pair.cfg.asymmetric else "ACTIVE"
+                        pair.entry_price = (pair.long_leg.entry_price + pair.short_leg.entry_price) / Decimal("2")
+                        pair.entry_ts = time.time()
+                        if pair.long_leg.size > pair.short_leg.size:
+                            pair.signal_direction = "bullish"
+                            pair.long_leg.role = "PRIMARY"
+                            pair.short_leg.role = "COUNTER"
+                        elif pair.short_leg.size > pair.long_leg.size:
+                            pair.signal_direction = "bearish"
+                            pair.short_leg.role = "PRIMARY"
+                            pair.long_leg.role = "COUNTER"
+                        else:
+                            pair.signal_direction = "bullish"
+                            pair.long_leg.role = "PRIMARY"
+                            pair.short_leg.role = "PRIMARY"
+                        logger.info(
+                            f"[{sym}] Path B Reconciled: Phase={pair.phase} | Entry={pair.entry_price:.2f} | "
+                            f"Dir={pair.signal_direction} | Long={pair.long_leg.size} ({pair.long_leg.role}) | "
+                            f"Short={pair.short_leg.size} ({pair.short_leg.role})"
+                        )
+                    elif l_act and not s_act:
+                        pair.phase = "RUNNER_B1"
+                        pair.signal_direction = "bullish"
+                        pair.entry_price = pair.long_leg.entry_price
+                        pair.long_leg.role = "PRIMARY"
+                    elif s_act and not l_act:
+                        pair.phase = "RUNNER_B1"
+                        pair.signal_direction = "bearish"
+                        pair.entry_price = pair.short_leg.entry_price
+                        pair.short_leg.role = "PRIMARY"
+
         except Exception as e:
             logger.warning(f"Reconciliation check skipped: {e}")
         self._dump_state_json()

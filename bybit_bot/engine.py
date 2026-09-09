@@ -845,8 +845,8 @@ class BybitTradingEngine:
         # -- PHASE 2: RUNNER B1 (Trend Expansion & Zero-Loss Pullback) ---------
         elif pair.phase == "RUNNER_B1":
             if pair.signal_direction == "bullish" and pair.long_leg and pair.long_leg.status == "ACTIVE":
-                # Ratchet Milestone: +1.50D reached -> Ratchet SL to P0 + 1.0D (+1.0D profit lock)
-                trail_trig = entry_px * (Decimal("1") + Decimal("1.50") * d_val)
+                # Ratchet Milestone: +1.40D reached -> Ratchet SL to P0 + 1.0D (+1.0D profit lock)
+                trail_trig = entry_px * (Decimal("1") + Decimal("1.40") * d_val)
                 if price >= trail_trig and not pair.b1_trailed:
                     new_sl = entry_px * (Decimal("1") + Decimal("1.00") * d_val)
                     pair.long_leg.trailing_sl = new_sl
@@ -876,8 +876,8 @@ class BybitTradingEngine:
                     return
 
             elif pair.signal_direction == "bearish" and pair.short_leg and pair.short_leg.status == "ACTIVE":
-                # Ratchet Milestone: -1.50D reached -> Ratchet SL to P0 - 1.0D (+1.0D profit lock)
-                trail_trig = entry_px * (Decimal("1") - Decimal("1.50") * d_val)
+                # Ratchet Milestone: -1.40D reached -> Ratchet SL to P0 - 1.0D (+1.0D profit lock)
+                trail_trig = entry_px * (Decimal("1") - Decimal("1.40") * d_val)
                 if price <= trail_trig and not pair.b1_trailed:
                     new_sl = entry_px * (Decimal("1") - Decimal("1.00") * d_val)
                     pair.short_leg.trailing_sl = new_sl

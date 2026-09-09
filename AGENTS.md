@@ -28,7 +28,7 @@ Unlike naive single-directional momentum strategies that suffer catastrophic dra
    - **Branch 2: Signal Trapped (-1.0D Expansion / Method A Size-Flip)**:
      - Collapse 100% trapped leg at market.
      - Upsize counter leg by adding $+70\%$ notional to make it a 100% runner.
-     - Initial SL at $P_0$, Ratchet 1 to True Breakeven at $-2.00D$, Ratchet 2 to $+1.0D$ lock at $-3.00D$, Full TP at $-3.50D$.
+     - Initial SL at $P_0$, Full TP at $\pm 2.00D$ ($+1.0D$ extension from confirm, True Breakeven / Flat Capital Recycler), or ratchets to higher targets ($\pm 2.5D$ to $\pm 3.5D$).
    - **Branch 3: Consolidation Timeout (50-Candle Window)**:
      - If neither $+1.0D$ nor $-1.0D$ is reached within 50 bars, liquidates both legs at market to recycle margin.
 

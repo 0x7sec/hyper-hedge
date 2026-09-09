@@ -375,8 +375,18 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             md.append("| Timestamp | Symbol | Leg | Event | Price | Size | Net PnL |")
             md.append("|---|---|:---:|:---:|:---:|:---:|:---:|")
             for t in trades[:6]:
-                pnl = t.get("pnl_usd", "0")
-                md.append(f"| {t.get('timestamp','')} | {t.get('symbol','')} | {t.get('leg_side','')} | {t.get('event_type','')} | ${float(t.get('fill_price',0)):.2f} | {t.get('size','')} | ${float(pnl):+.2f} |")
+                leg_val = t.get("leg") or t.get("leg_side", "")
+                evt_val = t.get("event") or t.get("event_type", "")
+                try:
+                    px_val = float(t.get("price") or t.get("fill_price", 0) or 0)
+                except (ValueError, TypeError):
+                    px_val = 0.0
+                try:
+                    pnl_val = float(t.get("leg_pnl_usd") or t.get("pnl_usd", 0) or 0)
+                except (ValueError, TypeError):
+                    pnl_val = 0.0
+                size_val = t.get("size", "")
+                md.append(f"| {t.get('timestamp','')} | {t.get('symbol','')} | {leg_val} | {evt_val} | ${px_val:.2f} | {size_val} | ${pnl_val:+.2f} |")
         md.append("")
 
         md.append("## Recent System & Crash Logs (Last 15 Lines)")
@@ -404,7 +414,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             with open(path, "w", newline="", encoding="utf-8") as f:
                 csv.writer(f).writerow([
                     "timestamp", "symbol", "cycle", "leg", "event",
-                    "price", "extreme_price", "trailing_sl", "tp_target",
+                    "price", "size", "extreme_price", "trailing_sl", "tp_target",
                     "leg_pnl_usd", "pair_cumulative_pnl",
                 ])
             cleared = True
@@ -607,15 +617,25 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         # Trade rows
         trade_rows = []
         for t in trades:
-            pnl_val = float(t.get("pnl_usd", 0) or 0)
+            leg_val = t.get("leg") or t.get("leg_side", "")
+            evt_val = t.get("event") or t.get("event_type", "")
+            try:
+                px_val = float(t.get("price") or t.get("fill_price", 0) or 0)
+            except (ValueError, TypeError):
+                px_val = 0.0
+            try:
+                pnl_val = float(t.get("leg_pnl_usd") or t.get("pnl_usd", 0) or 0)
+            except (ValueError, TypeError):
+                pnl_val = 0.0
+            size_val = t.get("size", "")
             col = "#10b981" if pnl_val > 0 else ("#ef4444" if pnl_val < 0 else "#94a3b8")
             trade_rows.append(f"""<tr>
               <td>{t.get('timestamp','')}</td>
               <td><b>{t.get('symbol','')}</b></td>
-              <td><span class="badge {t.get('leg_side','').lower()}">{t.get('leg_side','')}</span></td>
-              <td>{t.get('event_type','')}</td>
-              <td>${float(t.get('fill_price',0)):.2f}</td>
-              <td>{t.get('size','')}</td>
+              <td><span class="badge {leg_val.lower()}">{leg_val}</span></td>
+              <td>{evt_val}</td>
+              <td>${px_val:.2f}</td>
+              <td>{size_val}</td>
               <td style="color:{col}; font-weight:600;">${pnl_val:+.2f}</td>
             </tr>""")
         trades_html = "\n".join(trade_rows) if trade_rows else '<tr><td colspan="7" style="text-align:center; color:#64748b;">No trades executed yet</td></tr>'

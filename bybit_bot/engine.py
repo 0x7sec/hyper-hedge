@@ -42,6 +42,7 @@ class PairState:
     long_leg: Optional[PositionLeg] = None
     short_leg: Optional[PositionLeg] = None
     latest_price: Optional[Decimal] = None
+    last_tick_time: float = 0.0
     cycle_count: int = 0
     cumulative_pnl: Decimal = Decimal("0")
     last_closed_ts: int = 0
@@ -83,6 +84,8 @@ class BybitTradingEngine:
         self.total_cycles_completed = 0
         self.scan_count = 0
         self.ws: Optional[WebSocket] = None
+        self.last_ws_msg_time: float = 0.0
+        self.last_ws_reconnect_time: float = 0.0
 
         self._init_csv()
 
@@ -157,15 +160,68 @@ class BybitTradingEngine:
 
     def _start_websocket(self) -> None:
         """Start a single WebSocket subscribing to ticker streams for all active symbols."""
-        self.ws = WebSocket(testnet=self.config.testnet, channel_type="linear")
-        for sym in self.pairs.keys():
-            self.ws.ticker_stream(symbol=sym, callback=self._on_ticker_message)
-        logger.info(f"Unified WebSocket streaming {len(self.pairs)} symbols...")
+        try:
+            if self.ws:
+                try:
+                    self.ws.exit()
+                except Exception:
+                    pass
+            self.ws = WebSocket(testnet=self.config.testnet, channel_type="linear")
+            for sym in self.pairs.keys():
+                self.ws.ticker_stream(symbol=sym, callback=self._on_ticker_message)
+            self.last_ws_msg_time = time.time()
+            logger.info(f"Unified WebSocket streaming {len(self.pairs)} symbols...")
+        except Exception as e:
+            logger.error(f"Failed to start WebSocket: {e}")
+
+    def _check_websocket_health(self) -> None:
+        """Watchdog: if WebSocket has been silent for > 30s or disconnected, cleanly reconnect."""
+        if not self.running:
+            return
+        now = time.time()
+        if now - self.last_ws_reconnect_time < 30.0:
+            return
+
+        is_conn = False
+        try:
+            is_conn = self.ws.is_connected() if self.ws else False
+        except Exception:
+            is_conn = False
+
+        silent = (now - self.last_ws_msg_time > 30.0) if self.last_ws_msg_time > 0 else (now - self.session_start.timestamp() > 30.0)
+
+        if not is_conn or silent:
+            logger.warning(
+                f"[WS WATCHDOG] WebSocket silent/disconnected (connected={is_conn}, "
+                f"last_msg={int(now - self.last_ws_msg_time)}s ago). Reconnecting..."
+            )
+            self.last_ws_reconnect_time = now
+            self._start_websocket()
+
+    def _get_fresh_price(self, pair: PairState) -> Decimal:
+        """Get live market price: use latest WS tick if < 3s old, else fetch fresh from REST."""
+        now = time.time()
+        sym = pair.cfg.symbol
+        ws_is_fresh = (pair.latest_price is not None) and (now - pair.last_tick_time <= 3.0)
+        if ws_is_fresh:
+            return pair.latest_price
+
+        # Fallback to REST API ticker
+        try:
+            px = self.service.get_market_price(sym)
+            pair.latest_price = px
+            pair.last_tick_time = now
+            return px
+        except Exception as e:
+            logger.warning(f"[{sym}] REST price fetch failed: {e}")
+            return pair.latest_price or Decimal("0")
 
     def _on_ticker_message(self, msg: dict) -> None:
         """Handle live price ticks across any subscribed symbol."""
         if not self.running:
             return
+        now = time.time()
+        self.last_ws_msg_time = now
         topic = msg.get("topic", "")
         # Format is tickers.BTCUSDT
         sym = topic.split(".")[-1] if "." in topic else ""
@@ -180,6 +236,7 @@ class BybitTradingEngine:
 
         price = Decimal(str(price_str))
         pair.latest_price = price
+        pair.last_tick_time = now
 
         # Process trailing stop & TP if pair is active
         if pair.status == "ACTIVE":
@@ -294,6 +351,9 @@ class BybitTradingEngine:
         while self.running:
             now = time.time()
 
+            # -- 0. Monitor WebSocket connection health -----------------------
+            self._check_websocket_health()
+
             # -- 1. Check max cycles limit ------------------------------------
             if self.config.max_cycles > 0 and self.total_cycles_completed >= self.config.max_cycles:
                 console.print(f"\n[bold cyan]Max cycles ({self.config.max_cycles}) completed. Stopping.[/bold cyan]")
@@ -342,8 +402,11 @@ class BybitTradingEngine:
 
             # Active pairs display current legs & PnL
             if pair.status == "ACTIVE":
-                px = pair.latest_price or self.service.get_market_price(sym)
-                pair.latest_price = px
+                px = self._get_fresh_price(pair)
+
+                # CRITICAL: Always process trailing stop / branch triggers on latest price!
+                if px > Decimal("0"):
+                    self._process_pair_tick(pair, px)
 
                 # Check for candle timeout if in incubation
                 if pair.phase == "INCUBATION" and pair.entry_ts > 0:
@@ -365,6 +428,31 @@ class BybitTradingEngine:
                     f"Long: ${l_pnl:+.2f} ({l_pct:+.2f}%) | Short: ${s_pnl:+.2f} ({s_pct:+.2f}%) | "
                     f"Net: [{color}]${net:+.2f}[/{color}]"
                 )
+
+                # Update candles and indicators for active pairs so dashboard remains live
+                try:
+                    active_candles = self.service.get_recent_candles(
+                        symbol=sym, interval=pair.cfg.candle_interval, limit=100
+                    )
+                    if len(active_candles) >= 3:
+                        compute_indicators(
+                            active_candles,
+                            fast_periods=[pair.cfg.ema_fast, pair.cfg.ema_slow],
+                            adx_period=pair.cfg.adx_period,
+                        )
+                        c_candle = active_candles[-2]
+                        fast_v = c_candle.get(f"ema_{pair.cfg.ema_fast}")
+                        slow_v = c_candle.get(f"ema_{pair.cfg.ema_slow}")
+                        adx_v  = c_candle.get("adx")
+                        if fast_v is not None:
+                            pair.fast_ema = Decimal(str(fast_v))
+                        if slow_v is not None:
+                            pair.slow_ema = Decimal(str(slow_v))
+                        if adx_v is not None:
+                            pair.adx_val = Decimal(str(adx_v))
+                except Exception as e:
+                    logger.debug(f"[{sym}] Active candle update skipped: {e}")
+
                 continue
 
             # Check concurrency limit
@@ -390,8 +478,11 @@ class BybitTradingEngine:
 
                 closed_candle = candles[-2]
                 closed_ts = closed_candle["timestamp"]
-                px = pair.latest_price or candles[-1]["close"]
-                pair.latest_price = px
+                # Use fresh price: WS if fresh, else last candle close or REST
+                px = self._get_fresh_price(pair)
+                if px <= Decimal("0"):
+                    px = candles[-1]["close"]
+                    pair.latest_price = px
 
                 fast_v = closed_candle.get(f"ema_{pair.cfg.ema_fast}")
                 slow_v = closed_candle.get(f"ema_{pair.cfg.ema_slow}")
@@ -643,7 +734,7 @@ class BybitTradingEngine:
         """Close both legs at market after timeout (50 bars in deadlock)."""
         sym = pair.cfg.symbol
         console.print(f"\n[bold magenta]>>> [{sym}] EXECUTING TIMEOUT LIQUIDATION (50 BARS CHOP) <<<[/bold magenta]")
-        px = pair.latest_price or self.service.get_market_price(sym)
+        px = self._get_fresh_price(pair)
         if pair.long_leg and pair.long_leg.status == "ACTIVE":
             self.service.close_position(1, pair.long_leg.size, symbol=sym)
             pair.long_leg.status = "CLOSED_TIMEOUT"
@@ -1143,7 +1234,9 @@ class BybitTradingEngine:
                     continue
 
                 active_indices = active_by_sym.get(sym, set())
-                px = pair.latest_price or self.service.get_market_price(sym)
+                px = self._get_fresh_price(pair)
+                if px > Decimal("0"):
+                    self._process_pair_tick(pair, px)
 
                 if pair.long_leg and pair.long_leg.status == "ACTIVE" and 1 not in active_indices:
                     logger.info(f"[{sym}] Exchange confirms LONG closed.")
@@ -1209,6 +1302,7 @@ class BybitTradingEngine:
                 if l_done and s_done:
                     self._close_pair_cycle(pair)
 
+            self._dump_state_json()
         except Exception as e:
             logger.debug(f"REST reconciliation skipped: {e}")
 
@@ -1245,7 +1339,7 @@ class BybitTradingEngine:
             with open(self.config.log_csv, mode="w", newline="", encoding="utf-8") as f:
                 csv.writer(f).writerow([
                     "timestamp", "symbol", "cycle", "leg", "event",
-                    "price", "extreme_price", "trailing_sl", "tp_target",
+                    "price", "size", "extreme_price", "trailing_sl", "tp_target",
                     "leg_pnl_usd", "pair_cumulative_pnl",
                 ])
 
@@ -1260,6 +1354,7 @@ class BybitTradingEngine:
                 "LONG" if leg.position_idx == 1 else "SHORT",
                 event,
                 f"{price:.2f}",
+                f"{leg.size}",
                 f"{leg.extreme_price:.2f}",
                 f"{leg.trailing_sl:.2f}",
                 f"{leg.tp_target:.2f}",

@@ -14,6 +14,7 @@ class PositionLeg:
     tp_target: Decimal
     last_ratchet_extreme: Decimal
     symbol: str = ""  # Market symbol (e.g. BTCUSDT, ETHUSDT, SOLUSDT)
+    role: str = "PRIMARY"  # "PRIMARY" or "COUNTER"
     status: str = "ACTIVE"  # "ACTIVE", "CLOSED_TP", "CLOSED_SL", "CLOSED_MANUAL"
     exit_price: Optional[Decimal] = None
     realized_pnl: Optional[Decimal] = None
@@ -26,6 +27,7 @@ class PositionLeg:
         sl_ratio: Decimal,
         tp_ratio: Decimal,
         symbol: str = "",
+        role: str = "PRIMARY",
     ) -> "PositionLeg":
         initial_sl = entry_price * (Decimal("1") - sl_ratio)
         tp_target = entry_price * (Decimal("1") + tp_ratio)
@@ -39,6 +41,7 @@ class PositionLeg:
             tp_target=tp_target,
             last_ratchet_extreme=entry_price,
             symbol=symbol,
+            role=role,
         )
 
     @classmethod
@@ -49,6 +52,7 @@ class PositionLeg:
         sl_ratio: Decimal,
         tp_ratio: Decimal,
         symbol: str = "",
+        role: str = "PRIMARY",
     ) -> "PositionLeg":
         initial_sl = entry_price * (Decimal("1") + sl_ratio)
         tp_target = entry_price * (Decimal("1") - tp_ratio)
@@ -62,7 +66,18 @@ class PositionLeg:
             tp_target=tp_target,
             last_ratchet_extreme=entry_price,
             symbol=symbol,
+            role=role,
         )
+
+    def upsize(self, add_size: Decimal, fill_price: Decimal) -> None:
+        """Upsize counter position to 100% runner and recompute blended entry price."""
+        total_size = self.size + add_size
+        if total_size > Decimal("0"):
+            self.entry_price = (self.size * self.entry_price + add_size * fill_price) / total_size
+            self.size = total_size
+            self.extreme_price = fill_price
+            self.last_ratchet_extreme = fill_price
+            self.role = "PRIMARY"
 
     def pnl(self, current_price: Decimal) -> Tuple[Decimal, Decimal]:
         """Returns (pnl_usd, pnl_pct). Uses exact exchange realized_pnl if closed."""

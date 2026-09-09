@@ -8,52 +8,58 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-# -- Champion defaults per market ---------------------------------------------
+# -- Champion defaults per market (Path B Asymmetric Trap Hunter) -------------
 DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
     "BTCUSDT": {
-        "candle_interval": "15",
+        "candle_interval": "60",
         "ema_fast": 9,
         "ema_slow": 21,
         "adx_min": Decimal("15"),
         "adx_period": 14,
-        "sl_pct": Decimal("6.0"),
-        "tp_pct": Decimal("2.5"),
+        "d_pct": Decimal("0.70"),
+        "sl_pct": Decimal("0.34"),  # Base Zero-Loss SL = +0.48D
+        "tp_pct": Decimal("1.40"),  # Full Take-Profit = +2.0D
         "ratchet_step_pct": Decimal("0.25"),
         "be_lock": True,
-        "be_buffer_pct": Decimal("0.20"),
-        "size": Decimal("0.007"),  # ~$530 notional per leg (~$265 margin @ 4x)
-        "asymmetric": False,
-        "hedge_ratio": Decimal("0.50"),
+        "be_buffer_pct": Decimal("0.34"),
+        "size": Decimal("0.04"),   # ~$2,500 notional per pair on $1,000 capital
+        "asymmetric": True,
+        "hedge_ratio": Decimal("0.30"),
+        "timeout_bars": 50,
     },
     "ETHUSDT": {
-        "candle_interval": "15",
+        "candle_interval": "60",
         "ema_fast": 9,
         "ema_slow": 21,
         "adx_min": Decimal("0"),
         "adx_period": 14,
-        "sl_pct": Decimal("6.0"),
-        "tp_pct": Decimal("2.5"),
+        "d_pct": Decimal("0.80"),
+        "sl_pct": Decimal("0.38"),  # Base Zero-Loss SL = +0.48D
+        "tp_pct": Decimal("1.60"),  # Full Take-Profit = +2.0D
         "ratchet_step_pct": Decimal("0.25"),
         "be_lock": True,
-        "be_buffer_pct": Decimal("0.20"),
-        "size": Decimal("0.20"),   # ~$500 notional per leg (~$250 margin @ 4x)
-        "asymmetric": False,
-        "hedge_ratio": Decimal("0.50"),
+        "be_buffer_pct": Decimal("0.38"),
+        "size": Decimal("1.0"),    # ~$2,500 notional per pair on $1,000 capital
+        "asymmetric": True,
+        "hedge_ratio": Decimal("0.30"),
+        "timeout_bars": 50,
     },
     "SOLUSDT": {
-        "candle_interval": "15",
+        "candle_interval": "60",
         "ema_fast": 9,
         "ema_slow": 21,
-        "adx_min": Decimal("15"),  # ADX>15 filters chop — matches BTC config
+        "adx_min": Decimal("15"),  # ADX>15 filters flat ranges
         "adx_period": 14,
-        "sl_pct": Decimal("6.0"),
-        "tp_pct": Decimal("2.5"),
+        "d_pct": Decimal("0.80"),
+        "sl_pct": Decimal("0.38"),  # Base Zero-Loss SL = +0.48D
+        "tp_pct": Decimal("1.60"),  # Full Take-Profit = +2.0D
         "ratchet_step_pct": Decimal("0.25"),
         "be_lock": True,
-        "be_buffer_pct": Decimal("0.20"),
-        "size": Decimal("5.0"),    # ~$520 notional per leg (~$260 margin @ 4x)
-        "asymmetric": False,
-        "hedge_ratio": Decimal("0.50"),
+        "be_buffer_pct": Decimal("0.38"),
+        "size": Decimal("15.0"),   # ~$2,500 notional per pair on $1,000 capital
+        "asymmetric": True,
+        "hedge_ratio": Decimal("0.30"),
+        "timeout_bars": 50,
     },
     "XAUUSDT": {
         "candle_interval": "5",
@@ -61,14 +67,16 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "ema_slow": 50,
         "adx_min": Decimal("15"),
         "adx_period": 14,
-        "sl_pct": Decimal("4.0"),
-        "tp_pct": Decimal("4.2"),
+        "d_pct": Decimal("0.40"),
+        "sl_pct": Decimal("0.40"),
+        "tp_pct": Decimal("1.20"),
         "ratchet_step_pct": Decimal("0.25"),
-        "be_lock": False,
+        "be_lock": True,
         "be_buffer_pct": Decimal("0.20"),
-        "size": Decimal("0.01"),   # Safe testnet size (~$44 notional)
-        "asymmetric": False,
-        "hedge_ratio": Decimal("0.50"),
+        "size": Decimal("0.01"),
+        "asymmetric": True,
+        "hedge_ratio": Decimal("0.30"),
+        "timeout_bars": 50,
     },
 }
 
@@ -76,19 +84,21 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
 @dataclass
 class SymbolConfig:
     symbol: str
-    candle_interval: str = "15"
+    candle_interval: str = "60"
     ema_fast: int = 9
     ema_slow: int = 21
     adx_min: Decimal = Decimal("0")
     adx_period: int = 14
-    sl_pct: Decimal = Decimal("6.0")
-    tp_pct: Decimal = Decimal("2.5")
+    d_pct: Decimal = Decimal("0.80")
+    sl_pct: Decimal = Decimal("0.38")
+    tp_pct: Decimal = Decimal("1.60")
     ratchet_step_pct: Decimal = Decimal("0.25")
     be_lock: bool = True
-    be_buffer_pct: Decimal = Decimal("0.20")
+    be_buffer_pct: Decimal = Decimal("0.38")
     size: Decimal = Decimal("0.001")
-    asymmetric: bool = False
-    hedge_ratio: Decimal = Decimal("0.50")
+    asymmetric: bool = True
+    hedge_ratio: Decimal = Decimal("0.30")
+    timeout_bars: int = 50
 
     @classmethod
     def from_profile_or_defaults(cls, symbol: str, overrides: Optional[Dict[str, Any]] = None) -> "SymbolConfig":
@@ -104,6 +114,9 @@ class SymbolConfig:
         for pfx in (f"{sym}_", f"{prefix}_"):
             if os.getenv(f"{pfx}SIZE"):
                 try: params["size"] = Decimal(os.getenv(f"{pfx}SIZE"))
+                except Exception: pass
+            if os.getenv(f"{pfx}D_PCT"):
+                try: params["d_pct"] = Decimal(os.getenv(f"{pfx}D_PCT"))
                 except Exception: pass
             if os.getenv(f"{pfx}SL_PCT"):
                 try: params["sl_pct"] = Decimal(os.getenv(f"{pfx}SL_PCT"))
@@ -127,12 +140,27 @@ class SymbolConfig:
                 params["candle_interval"] = os.getenv(f"{pfx}CANDLE_INTERVAL")
             if os.getenv(f"{pfx}BE_LOCK"):
                 params["be_lock"] = os.getenv(f"{pfx}BE_LOCK").lower() in ("true", "1", "yes")
+            if os.getenv(f"{pfx}BE_BUFFER_PCT"):
+                try: params["be_buffer_pct"] = Decimal(os.getenv(f"{pfx}BE_BUFFER_PCT"))
+                except Exception: pass
+            if os.getenv(f"{pfx}ASYMMETRIC"):
+                params["asymmetric"] = os.getenv(f"{pfx}ASYMMETRIC").lower() in ("true", "1", "yes")
+            if os.getenv(f"{pfx}HEDGE_RATIO"):
+                try: params["hedge_ratio"] = Decimal(os.getenv(f"{pfx}HEDGE_RATIO"))
+                except Exception: pass
+            if os.getenv(f"{pfx}TIMEOUT_BARS"):
+                try: params["timeout_bars"] = int(os.getenv(f"{pfx}TIMEOUT_BARS"))
+                except Exception: pass
 
         if overrides:
             for k, v in overrides.items():
                 if v is not None:
                     params[k] = v
         return cls(**params)
+
+    @property
+    def d_ratio(self) -> Decimal:
+        return self.d_pct / Decimal("100")
 
     @property
     def sl_ratio(self) -> Decimal:
@@ -145,6 +173,10 @@ class SymbolConfig:
     @property
     def ratchet_step_ratio(self) -> Decimal:
         return self.ratchet_step_pct / Decimal("100")
+
+    @property
+    def effective_counter_size(self) -> Decimal:
+        return self.size * self.hedge_ratio
 
     @property
     def be_buffer_ratio(self) -> Decimal:
@@ -160,7 +192,7 @@ class Config:
     # -- Multi-Symbol Setup ---------------------------------------------------
     symbols: List[SymbolConfig] = field(default_factory=list)
     testnet: bool = True
-    leverage: int = 4
+    leverage: int = 10
     max_concurrent_pairs: int = 3
 
     # -- Cycle & Execution management -----------------------------------------
@@ -179,27 +211,35 @@ class Config:
 
     @property
     def candle_interval(self) -> str:
-        return self.symbols[0].candle_interval if self.symbols else "15"
+        return self.symbols[0].candle_interval if self.symbols else "60"
 
     @property
     def size(self) -> Decimal:
         return self.symbols[0].size if self.symbols else Decimal("0.001")
 
     @property
+    def d_pct(self) -> Decimal:
+        return self.symbols[0].d_pct if self.symbols else Decimal("0.80")
+
+    @property
+    def d_ratio(self) -> Decimal:
+        return self.symbols[0].d_ratio if self.symbols else Decimal("0.008")
+
+    @property
     def sl_pct(self) -> Decimal:
-        return self.symbols[0].sl_pct if self.symbols else Decimal("6.0")
+        return self.symbols[0].sl_pct if self.symbols else Decimal("0.38")
 
     @property
     def tp_pct(self) -> Decimal:
-        return self.symbols[0].tp_pct if self.symbols else Decimal("2.5")
+        return self.symbols[0].tp_pct if self.symbols else Decimal("1.60")
 
     @property
     def sl_ratio(self) -> Decimal:
-        return self.symbols[0].sl_ratio if self.symbols else Decimal("0.06")
+        return self.symbols[0].sl_ratio if self.symbols else Decimal("0.0038")
 
     @property
     def tp_ratio(self) -> Decimal:
-        return self.symbols[0].tp_ratio if self.symbols else Decimal("0.025")
+        return self.symbols[0].tp_ratio if self.symbols else Decimal("0.016")
 
     @property
     def ratchet_step_ratio(self) -> Decimal:
@@ -224,6 +264,10 @@ class Config:
     @property
     def hedge_ratio(self) -> Decimal:
         return self.symbols[0].hedge_ratio if self.symbols else Decimal("0.50")
+
+    @property
+    def effective_counter_size(self) -> Decimal:
+        return self.symbols[0].effective_counter_size if self.symbols else Decimal("0")
 
     @property
     def ema_fast(self) -> int:
@@ -271,12 +315,17 @@ class Config:
 
         # Optional universal overrides (if specified, applies to all symbols)
         parser.add_argument("--size", type=str, default=None, help="Override size per leg")
+        parser.add_argument("--d-pct", type=str, default=None, help="Override displacement threshold %% (e.g. 0.80)")
         parser.add_argument("--sl-pct", type=str, default=None, help="Override Trailing SL %%")
         parser.add_argument("--tp-pct", type=str, default=None, help="Override Take Profit %%")
-        parser.add_argument("--candle-interval", type=str, default=None, help="Override candle interval")
-        parser.add_argument("--ema-fast", type=int, default=None, help="Override fast EMA period")
-        parser.add_argument("--ema-slow", type=int, default=None, help="Override slow EMA period")
+        parser.add_argument("--candle-interval", type=str, default=None, help="Override candle interval (e.g. 60)")
+        parser.add_argument("--ema-fast", type=int, default=None, help="Override fast EMA period (default: 9)")
+        parser.add_argument("--ema-slow", type=int, default=None, help="Override slow EMA period (default: 21)")
         parser.add_argument("--adx-min", type=str, default=None, help="Override minimum ADX threshold")
+        parser.add_argument("--asymmetric", action="store_true", default=None, help="Enable asymmetric 100%%/30%% entry")
+        parser.add_argument("--no-asymmetric", action="store_true", help="Disable asymmetric entry")
+        parser.add_argument("--hedge-ratio", type=str, default=None, help="Counter-hedge ratio (default: 0.30)")
+        parser.add_argument("--timeout-bars", type=int, default=None, help="Max consolidation wait bars (default: 50)")
         parser.add_argument("--be-lock", action="store_true", default=None, help="Force break-even lock")
         parser.add_argument("--no-be-lock", action="store_true", help="Disable break-even lock")
 
@@ -312,6 +361,8 @@ class Config:
         overrides: Dict[str, Any] = {}
         if args.size:
             overrides["size"] = Decimal(str(args.size))
+        if args.d_pct:
+            overrides["d_pct"] = Decimal(str(args.d_pct))
         if args.sl_pct:
             overrides["sl_pct"] = Decimal(str(args.sl_pct))
         if args.tp_pct:
@@ -324,6 +375,14 @@ class Config:
             overrides["ema_slow"] = args.ema_slow
         if args.adx_min:
             overrides["adx_min"] = Decimal(str(args.adx_min))
+        if args.no_asymmetric:
+            overrides["asymmetric"] = False
+        elif args.asymmetric:
+            overrides["asymmetric"] = True
+        if args.hedge_ratio:
+            overrides["hedge_ratio"] = Decimal(str(args.hedge_ratio))
+        if args.timeout_bars:
+            overrides["timeout_bars"] = args.timeout_bars
         if args.no_be_lock:
             overrides["be_lock"] = False
         elif args.be_lock:

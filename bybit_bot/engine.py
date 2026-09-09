@@ -38,6 +38,7 @@ console = Console()
 class PairState:
     cfg: SymbolConfig
     status: str = "SCANNING"  # "SCANNING", "ACTIVE", "COOLDOWN"
+    phase: str = "SCANNING"   # "SCANNING", "INCUBATION", "RUNNER_B1", "RUNNER_B2", "COOLDOWN"
     long_leg: Optional[PositionLeg] = None
     short_leg: Optional[PositionLeg] = None
     latest_price: Optional[Decimal] = None
@@ -49,6 +50,16 @@ class PairState:
     fast_ema: Optional[Decimal] = None
     slow_ema: Optional[Decimal] = None
     adx_val: Optional[Decimal] = None
+
+    # Path B: Asymmetric Size-Flip Trap Hunter state
+    signal_direction: Optional[str] = None  # "bullish" or "bearish"
+    entry_price: Decimal = Decimal("0")
+    entry_ts: float = 0.0
+    bars_elapsed: int = 0
+    b1_trailed: bool = False
+    b2_trailed_to_be: bool = False
+    b2_trailed_to_plus_1d: bool = False
+    base_be_sl: Decimal = Decimal("0")
 
     def is_active(self) -> bool:
         return self.status == "ACTIVE" and (
@@ -295,12 +306,25 @@ class BybitTradingEngine:
             # Active pairs display current legs & PnL
             if pair.status == "ACTIVE":
                 px = pair.latest_price or self.service.get_market_price(sym)
+                pair.latest_price = px
+
+                # Check for candle timeout if in incubation
+                if pair.phase == "INCUBATION" and pair.entry_ts > 0:
+                    bar_secs = int(pair.cfg.candle_interval) * 60
+                    elapsed_bars = int((now - pair.entry_ts) / bar_secs) if bar_secs > 0 else 0
+                    pair.bars_elapsed = elapsed_bars
+                    if elapsed_bars >= pair.cfg.timeout_bars:
+                        console.print(f"\n[bold red]>>> [{sym}] TIMEOUT REACHED ({elapsed_bars}/{pair.cfg.timeout_bars} bars in deadlock) <<<[/bold red]")
+                        self._timeout_pair_cycle(pair)
+                        report_lines.append(f"  * [bold red]{sym:<8}[/bold red]: TIMEOUT LIQUIDATION (50 bars)")
+                        continue
+
                 l_pnl, l_pct = pair.long_leg.pnl(px) if pair.long_leg else (Decimal("0"), Decimal("0"))
                 s_pnl, s_pct = pair.short_leg.pnl(px) if pair.short_leg else (Decimal("0"), Decimal("0"))
                 net = l_pnl + s_pnl
                 color = "bold green" if net >= 0 else "bold red"
                 report_lines.append(
-                    f"  * [bold yellow]{sym:<8}[/bold yellow]: [bold]ACTIVE[/bold] @ ${px:.2f} | "
+                    f"  * [bold yellow]{sym:<8}[/bold yellow]: [bold]{pair.phase}[/bold] @ ${px:.2f} | "
                     f"Long: ${l_pnl:+.2f} ({l_pct:+.2f}%) | Short: ${s_pnl:+.2f} ({s_pct:+.2f}%) | "
                     f"Net: [{color}]${net:+.2f}[/{color}]"
                 )
@@ -418,9 +442,14 @@ class BybitTradingEngine:
                 p_data = {
                     "symbol": sym,
                     "status": pair.status,
+                    "phase": pair.phase,
+                    "signal_direction": pair.signal_direction,
                     "status_msg": pair.status_msg,
                     "latest_price": px_float,
+                    "entry_price": float(pair.entry_price) if pair.entry_price else None,
+                    "bars_elapsed": pair.bars_elapsed,
                     "candle_interval": pair.cfg.candle_interval,
+                    "d_pct": float(pair.cfg.d_pct),
                     "cycle_count": pair.cycle_count,
                     "cumulative_pnl": float(pair.cumulative_pnl),
                     "fast_ema": float(pair.fast_ema) if pair.fast_ema is not None else None,
@@ -433,6 +462,7 @@ class BybitTradingEngine:
                 if pair.long_leg and pair.long_leg.status == "ACTIVE":
                     p_data["long_leg"] = {
                         "side": "Long",
+                        "role": pair.long_leg.role,
                         "size": float(pair.long_leg.size),
                         "entry_price": float(pair.long_leg.entry_price),
                         "peak_price": float(pair.long_leg.extreme_price),
@@ -445,6 +475,7 @@ class BybitTradingEngine:
                 if pair.short_leg and pair.short_leg.status == "ACTIVE":
                     p_data["short_leg"] = {
                         "side": "Short",
+                        "role": pair.short_leg.role,
                         "size": float(pair.short_leg.size),
                         "entry_price": float(pair.short_leg.entry_price),
                         "trough_price": float(pair.short_leg.extreme_price),
@@ -521,42 +552,411 @@ class BybitTradingEngine:
 
         if pair.cfg.asymmetric and direction in ("bullish", "bearish"):
             base = pair.cfg.size
-            counter = (pair.cfg.size * pair.cfg.hedge_ratio)
+            counter = pair.cfg.effective_counter_size
             long_size  = base if direction == "bullish" else counter
             short_size = counter if direction == "bullish" else base
+            long_role  = "PRIMARY" if direction == "bullish" else "COUNTER"
+            short_role = "COUNTER" if direction == "bullish" else "PRIMARY"
         else:
             long_size  = pair.cfg.size
             short_size = pair.cfg.size
+            long_role  = "PRIMARY"
+            short_role = "PRIMARY"
 
         # Long leg
         long_fill = self.service.place_market_open("Buy", long_size, position_idx=1, symbol=sym)
         time.sleep(0.3)
-        pair.long_leg = PositionLeg.new_long(long_size, long_fill, sl_ratio, tp_ratio, symbol=sym)
+        pair.long_leg = PositionLeg.new_long(long_size, long_fill, sl_ratio, tp_ratio, symbol=sym, role=long_role)
         self.service.set_trading_stop(1, pair.long_leg.trailing_sl, pair.long_leg.tp_target, symbol=sym)
         self._csv_event(pair, pair.long_leg, "ENTRY", long_fill)
 
         # Short leg
         short_fill = self.service.place_market_open("Sell", short_size, position_idx=2, symbol=sym)
         time.sleep(0.3)
-        pair.short_leg = PositionLeg.new_short(short_size, short_fill, sl_ratio, tp_ratio, symbol=sym)
+        pair.short_leg = PositionLeg.new_short(short_size, short_fill, sl_ratio, tp_ratio, symbol=sym, role=short_role)
         self.service.set_trading_stop(2, pair.short_leg.trailing_sl, pair.short_leg.tp_target, symbol=sym)
         self._csv_event(pair, pair.short_leg, "ENTRY", short_fill)
 
         pair.status = "ACTIVE"
+        pair.phase = "INCUBATION" if pair.cfg.asymmetric else "ACTIVE"
+        pair.signal_direction = direction
+        pair.entry_price = (long_fill + short_fill) / Decimal("2")
+        pair.entry_ts = time.time()
+        pair.bars_elapsed = 0
+        pair.b1_trailed = False
+        pair.b2_trailed_to_be = False
+        pair.b2_trailed_to_plus_1d = False
+        pair.base_be_sl = Decimal("0")
         pair.cycle_count += 1
-        pair.status_msg = f"ACTIVE (Cycle #{pair.cycle_count})"
+        pair.status_msg = f"ACTIVE ({pair.phase} #{pair.cycle_count})"
 
         logger.info(
-            f"[{sym}] Both legs active: Long={long_size} @ {long_fill:.2f} | Short={short_size} @ {short_fill:.2f}"
+            f"[{sym}] Both legs active: Long({long_role})={long_size} @ {long_fill:.2f} | "
+            f"Short({short_role})={short_size} @ {short_fill:.2f} | Phase={pair.phase}"
         )
         self._dump_state_json()
+
+    # ==========================================================================
+    # DEAD-RANGE TIMEOUT LIQUIDATION (BRANCH 3)
+    # ==========================================================================
+
+    def _timeout_pair_cycle(self, pair: PairState) -> None:
+        """Close both legs at market after timeout (50 bars in deadlock)."""
+        sym = pair.cfg.symbol
+        console.print(f"\n[bold magenta]>>> [{sym}] EXECUTING TIMEOUT LIQUIDATION (50 BARS CHOP) <<<[/bold magenta]")
+        px = pair.latest_price or self.service.get_market_price(sym)
+        if pair.long_leg and pair.long_leg.status == "ACTIVE":
+            self.service.close_position(1, pair.long_leg.size, symbol=sym)
+            pair.long_leg.status = "CLOSED_TIMEOUT"
+            pair.long_leg.exit_price = px
+            self._csv_event(pair, pair.long_leg, "TIMEOUT_EXIT", px)
+        if pair.short_leg and pair.short_leg.status == "ACTIVE":
+            self.service.close_position(2, pair.short_leg.size, symbol=sym)
+            pair.short_leg.status = "CLOSED_TIMEOUT"
+            pair.short_leg.exit_price = px
+            self._csv_event(pair, pair.short_leg, "TIMEOUT_EXIT", px)
+        self._close_pair_cycle(pair)
 
     # ==========================================================================
     # LIVE TICK HANDLER & TRAILING STOP
     # ==========================================================================
 
     def _process_pair_tick(self, pair: PairState, price: Decimal) -> None:
-        """Process trailing ratchet, TP, and SL triggers on live price tick."""
+        """Route tick to Path B asymmetric engine or legacy symmetric trailing stop."""
+        pair.latest_price = price
+        if pair.cfg.asymmetric:
+            self._process_path_b_tick(pair, price)
+        else:
+            self._process_legacy_tick(pair, price)
+
+    def _process_path_b_tick(self, pair: PairState, price: Decimal) -> None:
+        """Execute Path B Asymmetric Trap Hunter & Zero-Loss Pullback state machine."""
+        sym = pair.cfg.symbol
+        d_val = pair.cfg.d_ratio
+        entry_px = pair.entry_price
+        base_qty = pair.cfg.size
+        c_qty = pair.cfg.effective_counter_size
+        fee_rate = Decimal("0.00055")
+
+        # -- PHASE 1: INCUBATION (Delta-Neutral Breakout Monitor) --------------
+        if pair.phase == "INCUBATION":
+            if entry_px <= Decimal("0"):
+                return
+
+            if pair.signal_direction == "bullish":
+                # BRANCH 1: Signal Was Right (Market expands +1.0D upward)
+                if price >= entry_px * (Decimal("1") + d_val):
+                    confirm_px = price
+                    # 1. Collapse 30% Counter Short Leg
+                    if pair.short_leg and pair.short_leg.status == "ACTIVE":
+                        self.service.close_position(2, pair.short_leg.size, symbol=sym)
+                        pair.short_leg.status = "CLOSED_COLLAPSE"
+                        pair.short_leg.exit_price = confirm_px
+                        self._csv_event(pair, pair.short_leg, "B1_COLLAPSE_COUNTER", confirm_px)
+
+                    # 2. Arm 100% Primary Long Runner with Zero-Loss SL
+                    s_loss = (entry_px - confirm_px) * c_qty
+                    s_fees = (entry_px + confirm_px) * c_qty * fee_rate
+                    needed_be = abs(s_loss) + s_fees + (entry_px * base_qty * fee_rate * Decimal("2"))
+                    long_sl_be = entry_px + (needed_be / base_qty)
+                    long_tp = confirm_px * (Decimal("1") + Decimal("1.00") * d_val)
+
+                    if pair.long_leg and pair.long_leg.status == "ACTIVE":
+                        pair.long_leg.trailing_sl = long_sl_be
+                        pair.long_leg.tp_target = long_tp
+                        pair.base_be_sl = long_sl_be
+                        pair.b1_trailed = False
+                        self.service.set_trading_stop(1, pair.long_leg.trailing_sl, pair.long_leg.tp_target, symbol=sym)
+                        self._csv_event(pair, pair.long_leg, "B1_ARMED", confirm_px)
+
+                    pair.phase = "RUNNER_B1"
+                    pair.status_msg = f"RUNNER B1 (Long @ {price:.2f}, SL: {long_sl_be:.2f}, TP: {long_tp:.2f})"
+                    console.print(
+                        f"\n[bold green]>>> [{sym}] BRANCH 1 HIT (+1.0D)! Counter Short collapsed. "
+                        f"Long Armed (SL: {long_sl_be:.2f}, TP: {long_tp:.2f}) <<<[/bold green]"
+                    )
+                    self._dump_state_json()
+                    return
+
+                # BRANCH 2: Signal Was Wrong / Trap (Market dumps -1.0D downward)
+                elif price <= entry_px * (Decimal("1") - d_val):
+                    confirm_px = price
+                    # 1. Collapse Trapped 100% Primary Long Leg
+                    if pair.long_leg and pair.long_leg.status == "ACTIVE":
+                        self.service.close_position(1, pair.long_leg.size, symbol=sym)
+                        pair.long_leg.status = "CLOSED_COLLAPSE"
+                        pair.long_leg.exit_price = confirm_px
+                        self._csv_event(pair, pair.long_leg, "B2_COLLAPSE_PRIMARY", confirm_px)
+
+                    # 2. Size-Flip: Add +70% to Counter Short Leg to make 100% Runner
+                    add_qty = base_qty - (pair.short_leg.size if pair.short_leg else c_qty)
+                    add_fill = self.service.place_market_open("Sell", add_qty, position_idx=2, symbol=sym)
+                    if pair.short_leg:
+                        pair.short_leg.upsize(add_qty, add_fill)
+                        pair.short_leg.role = "PRIMARY"
+
+                    # 3. Compute B2 Levels
+                    trapped_loss = - (entry_px - confirm_px) * base_qty
+                    trapped_fees = (entry_px + confirm_px) * base_qty * fee_rate
+                    upsize_fees = confirm_px * add_qty * fee_rate
+                    blend_px = pair.short_leg.entry_price if pair.short_leg else confirm_px
+                    total_drain = abs(trapped_loss) + trapped_fees + upsize_fees + (base_qty * blend_px * fee_rate * Decimal("2"))
+                    true_be = blend_px - (total_drain / base_qty)
+                    tp_level = confirm_px * (Decimal("1") - Decimal("2.50") * d_val)
+                    curr_sl = entry_px  # Initial SL placed at initial entry P0
+
+                    if pair.short_leg and pair.short_leg.status == "ACTIVE":
+                        pair.short_leg.trailing_sl = curr_sl
+                        pair.short_leg.tp_target = tp_level
+                        pair.base_be_sl = true_be
+                        pair.b2_trailed_to_be = False
+                        pair.b2_trailed_to_plus_1d = False
+                        self.service.set_trading_stop(2, pair.short_leg.trailing_sl, pair.short_leg.tp_target, symbol=sym)
+                        self._csv_event(pair, pair.short_leg, "B2_SIZE_FLIP", confirm_px)
+
+                    pair.phase = "RUNNER_B2"
+                    pair.status_msg = f"RUNNER B2 (Short Size-Flip @ {price:.2f}, SL: {curr_sl:.2f}, TP: {tp_level:.2f})"
+                    console.print(
+                        f"\n[bold yellow]>>> [{sym}] BRANCH 2 HIT (-1.0D)! Long collapsed. "
+                        f"Short Size-Flipped to 100% Runner (SL: {curr_sl:.2f}, TP: {tp_level:.2f}) <<<[/bold yellow]"
+                    )
+                    self._dump_state_json()
+                    return
+
+            elif pair.signal_direction == "bearish":
+                # BRANCH 1: Signal Was Right (Market expands -1.0D downward)
+                if price <= entry_px * (Decimal("1") - d_val):
+                    confirm_px = price
+                    # 1. Collapse 30% Counter Long Leg
+                    if pair.long_leg and pair.long_leg.status == "ACTIVE":
+                        self.service.close_position(1, pair.long_leg.size, symbol=sym)
+                        pair.long_leg.status = "CLOSED_COLLAPSE"
+                        pair.long_leg.exit_price = confirm_px
+                        self._csv_event(pair, pair.long_leg, "B1_COLLAPSE_COUNTER", confirm_px)
+
+                    # 2. Arm 100% Primary Short Runner with Zero-Loss SL
+                    l_loss = (confirm_px - entry_px) * c_qty
+                    l_fees = (entry_px + confirm_px) * c_qty * fee_rate
+                    needed_be = abs(l_loss) + l_fees + (entry_px * base_qty * fee_rate * Decimal("2"))
+                    short_sl_be = entry_px - (needed_be / base_qty)
+                    short_tp = confirm_px * (Decimal("1") - Decimal("1.00") * d_val)
+
+                    if pair.short_leg and pair.short_leg.status == "ACTIVE":
+                        pair.short_leg.trailing_sl = short_sl_be
+                        pair.short_leg.tp_target = short_tp
+                        pair.base_be_sl = short_sl_be
+                        pair.b1_trailed = False
+                        self.service.set_trading_stop(2, pair.short_leg.trailing_sl, pair.short_leg.tp_target, symbol=sym)
+                        self._csv_event(pair, pair.short_leg, "B1_ARMED", confirm_px)
+
+                    pair.phase = "RUNNER_B1"
+                    pair.status_msg = f"RUNNER B1 (Short @ {price:.2f}, SL: {short_sl_be:.2f}, TP: {short_tp:.2f})"
+                    console.print(
+                        f"\n[bold green]>>> [{sym}] BRANCH 1 HIT (-1.0D)! Counter Long collapsed. "
+                        f"Short Armed (SL: {short_sl_be:.2f}, TP: {short_tp:.2f}) <<<[/bold green]"
+                    )
+                    self._dump_state_json()
+                    return
+
+                # BRANCH 2: Signal Was Wrong / Trap (Market pumps +1.0D upward)
+                elif price >= entry_px * (Decimal("1") + d_val):
+                    confirm_px = price
+                    # 1. Collapse Trapped 100% Primary Short Leg
+                    if pair.short_leg and pair.short_leg.status == "ACTIVE":
+                        self.service.close_position(2, pair.short_leg.size, symbol=sym)
+                        pair.short_leg.status = "CLOSED_COLLAPSE"
+                        pair.short_leg.exit_price = confirm_px
+                        self._csv_event(pair, pair.short_leg, "B2_COLLAPSE_PRIMARY", confirm_px)
+
+                    # 2. Size-Flip: Add +70% to Counter Long Leg to make 100% Runner
+                    add_qty = base_qty - (pair.long_leg.size if pair.long_leg else c_qty)
+                    add_fill = self.service.place_market_open("Buy", add_qty, position_idx=1, symbol=sym)
+                    if pair.long_leg:
+                        pair.long_leg.upsize(add_qty, add_fill)
+                        pair.long_leg.role = "PRIMARY"
+
+                    # 3. Compute B2 Levels
+                    trapped_loss = - (confirm_px - entry_px) * base_qty
+                    trapped_fees = (entry_px + confirm_px) * base_qty * fee_rate
+                    upsize_fees = confirm_px * add_qty * fee_rate
+                    blend_px = pair.long_leg.entry_price if pair.long_leg else confirm_px
+                    total_drain = abs(trapped_loss) + trapped_fees + upsize_fees + (base_qty * blend_px * fee_rate * Decimal("2"))
+                    true_be = blend_px + (total_drain / base_qty)
+                    tp_level = confirm_px * (Decimal("1") + Decimal("2.50") * d_val)
+                    curr_sl = entry_px  # Initial SL placed at initial entry P0
+
+                    if pair.long_leg and pair.long_leg.status == "ACTIVE":
+                        pair.long_leg.trailing_sl = curr_sl
+                        pair.long_leg.tp_target = tp_level
+                        pair.base_be_sl = true_be
+                        pair.b2_trailed_to_be = False
+                        pair.b2_trailed_to_plus_1d = False
+                        self.service.set_trading_stop(1, pair.long_leg.trailing_sl, pair.long_leg.tp_target, symbol=sym)
+                        self._csv_event(pair, pair.long_leg, "B2_SIZE_FLIP", confirm_px)
+
+                    pair.phase = "RUNNER_B2"
+                    pair.status_msg = f"RUNNER B2 (Long Size-Flip @ {price:.2f}, SL: {curr_sl:.2f}, TP: {tp_level:.2f})"
+                    console.print(
+                        f"\n[bold yellow]>>> [{sym}] BRANCH 2 HIT (+1.0D)! Short collapsed. "
+                        f"Long Size-Flipped to 100% Runner (SL: {curr_sl:.2f}, TP: {tp_level:.2f}) <<<[/bold yellow]"
+                    )
+                    self._dump_state_json()
+                    return
+
+        # -- PHASE 2: RUNNER B1 (Trend Expansion & Zero-Loss Pullback) ---------
+        elif pair.phase == "RUNNER_B1":
+            if pair.signal_direction == "bullish" and pair.long_leg and pair.long_leg.status == "ACTIVE":
+                # Ratchet Milestone: +1.40D reached -> Ratchet SL to BE + 1.0D
+                trail_trig = entry_px * (Decimal("1") + Decimal("1.40") * d_val)
+                if price >= trail_trig and not pair.b1_trailed:
+                    new_sl = pair.base_be_sl + (entry_px * d_val)
+                    pair.long_leg.trailing_sl = new_sl
+                    pair.b1_trailed = True
+                    self.service.set_trading_stop(1, pair.long_leg.trailing_sl, pair.long_leg.tp_target, symbol=sym)
+                    console.print(f"\n[bold green]>>> [{sym} LONG B1 RATCHET] SL raised to {new_sl:.2f} (+1.0D Locked) <<<[/bold green]")
+                    self._csv_event(pair, pair.long_leg, "B1_RATCHET", price)
+
+                # TP Hit
+                if price >= pair.long_leg.tp_target:
+                    console.print(f"\n[bold green]>>> [{sym} LONG B1 TP HIT] @ {price:.2f} <<<[/bold green]")
+                    self.service.close_position(1, pair.long_leg.size, symbol=sym)
+                    pair.long_leg.status = "CLOSED_TP"
+                    pair.long_leg.exit_price = price
+                    self._csv_event(pair, pair.long_leg, "TP_HIT", price)
+                    self._close_pair_cycle(pair)
+                    return
+
+                # SL Hit (Zero-loss pullback or lock)
+                elif price <= pair.long_leg.trailing_sl:
+                    console.print(f"\n[bold yellow]>>> [{sym} LONG B1 SL HIT] @ {price:.2f} (Zero-Loss / Lock Preserved) <<<[/bold yellow]")
+                    self.service.close_position(1, pair.long_leg.size, symbol=sym)
+                    pair.long_leg.status = "CLOSED_SL"
+                    pair.long_leg.exit_price = price
+                    self._csv_event(pair, pair.long_leg, "SL_HIT", price)
+                    self._close_pair_cycle(pair)
+                    return
+
+            elif pair.signal_direction == "bearish" and pair.short_leg and pair.short_leg.status == "ACTIVE":
+                # Ratchet Milestone: -1.40D reached -> Ratchet SL to BE - 1.0D
+                trail_trig = entry_px * (Decimal("1") - Decimal("1.40") * d_val)
+                if price <= trail_trig and not pair.b1_trailed:
+                    new_sl = pair.base_be_sl - (entry_px * d_val)
+                    pair.short_leg.trailing_sl = new_sl
+                    pair.b1_trailed = True
+                    self.service.set_trading_stop(2, pair.short_leg.trailing_sl, pair.short_leg.tp_target, symbol=sym)
+                    console.print(f"\n[bold green]>>> [{sym} SHORT B1 RATCHET] SL lowered to {new_sl:.2f} (+1.0D Locked) <<<[/bold green]")
+                    self._csv_event(pair, pair.short_leg, "B1_RATCHET", price)
+
+                # TP Hit
+                if price <= pair.short_leg.tp_target:
+                    console.print(f"\n[bold green]>>> [{sym} SHORT B1 TP HIT] @ {price:.2f} <<<[/bold green]")
+                    self.service.close_position(2, pair.short_leg.size, symbol=sym)
+                    pair.short_leg.status = "CLOSED_TP"
+                    pair.short_leg.exit_price = price
+                    self._csv_event(pair, pair.short_leg, "TP_HIT", price)
+                    self._close_pair_cycle(pair)
+                    return
+
+                # SL Hit (Zero-loss pullback or lock)
+                elif price >= pair.short_leg.trailing_sl:
+                    console.print(f"\n[bold yellow]>>> [{sym} SHORT B1 SL HIT] @ {price:.2f} (Zero-Loss / Lock Preserved) <<<[/bold yellow]")
+                    self.service.close_position(2, pair.short_leg.size, symbol=sym)
+                    pair.short_leg.status = "CLOSED_SL"
+                    pair.short_leg.exit_price = price
+                    self._csv_event(pair, pair.short_leg, "SL_HIT", price)
+                    self._close_pair_cycle(pair)
+                    return
+
+        # -- PHASE 3: RUNNER B2 (Size-Flip Trap Hunter) ------------------------
+        elif pair.phase == "RUNNER_B2":
+            if pair.signal_direction == "bullish" and pair.short_leg and pair.short_leg.status == "ACTIVE":
+                # Milestone 2: Reaches -3.0D -> Ratchet SL to +1.0D Profit Lock
+                ratchet_trig = pair.base_be_sl - (pair.short_leg.entry_price * Decimal("0.40") * d_val)
+                sl_ratchet = pair.base_be_sl - (pair.short_leg.entry_price * d_val)
+                if price <= ratchet_trig and not pair.b2_trailed_to_plus_1d:
+                    pair.short_leg.trailing_sl = sl_ratchet
+                    pair.b2_trailed_to_plus_1d = True
+                    pair.b2_trailed_to_be = True
+                    self.service.set_trading_stop(2, pair.short_leg.trailing_sl, pair.short_leg.tp_target, symbol=sym)
+                    console.print(f"\n[bold green]>>> [{sym} SHORT B2 PROFIT RATCHET] SL lowered to {sl_ratchet:.2f} (+1.0D Locked) <<<[/bold green]")
+                    self._csv_event(pair, pair.short_leg, "B2_RATCHET_PROFIT", price)
+
+                # Milestone 1: Reaches -2.0D -> True Breakeven Lock (Zero Loss Secured)
+                elif price <= pair.base_be_sl and not pair.b2_trailed_to_be:
+                    pair.short_leg.trailing_sl = pair.base_be_sl
+                    pair.b2_trailed_to_be = True
+                    self.service.set_trading_stop(2, pair.short_leg.trailing_sl, pair.short_leg.tp_target, symbol=sym)
+                    console.print(f"\n[bold green]>>> [{sym} SHORT B2 TRUE BE LOCK] SL set to {pair.base_be_sl:.2f} (Zero Loss Secured) <<<[/bold green]")
+                    self._csv_event(pair, pair.short_leg, "B2_RATCHET_BE", price)
+
+                # TP Hit (-3.5D Target)
+                if price <= pair.short_leg.tp_target:
+                    console.print(f"\n[bold green]>>> [{sym} SHORT B2 TP HIT] @ {price:.2f} <<<[/bold green]")
+                    self.service.close_position(2, pair.short_leg.size, symbol=sym)
+                    pair.short_leg.status = "CLOSED_TP"
+                    pair.short_leg.exit_price = price
+                    self._csv_event(pair, pair.short_leg, "TP_HIT", price)
+                    self._close_pair_cycle(pair)
+                    return
+
+                # SL Hit (P0 or ratcheted)
+                elif price >= pair.short_leg.trailing_sl:
+                    console.print(f"\n[bold yellow]>>> [{sym} SHORT B2 SL HIT] @ {price:.2f} <<<[/bold yellow]")
+                    self.service.close_position(2, pair.short_leg.size, symbol=sym)
+                    pair.short_leg.status = "CLOSED_SL"
+                    pair.short_leg.exit_price = price
+                    self._csv_event(pair, pair.short_leg, "SL_HIT", price)
+                    self._close_pair_cycle(pair)
+                    return
+
+            elif pair.signal_direction == "bearish" and pair.long_leg and pair.long_leg.status == "ACTIVE":
+                # Milestone 2: Reaches +3.0D -> Ratchet SL to +1.0D Profit Lock
+                ratchet_trig = pair.base_be_sl + (pair.long_leg.entry_price * Decimal("0.40") * d_val)
+                sl_ratchet = pair.base_be_sl + (pair.long_leg.entry_price * d_val)
+                if price >= ratchet_trig and not pair.b2_trailed_to_plus_1d:
+                    pair.long_leg.trailing_sl = sl_ratchet
+                    pair.b2_trailed_to_plus_1d = True
+                    pair.b2_trailed_to_be = True
+                    self.service.set_trading_stop(1, pair.long_leg.trailing_sl, pair.long_leg.tp_target, symbol=sym)
+                    console.print(f"\n[bold green]>>> [{sym} LONG B2 PROFIT RATCHET] SL raised to {sl_ratchet:.2f} (+1.0D Locked) <<<[/bold green]")
+                    self._csv_event(pair, pair.long_leg, "B2_RATCHET_PROFIT", price)
+
+                # Milestone 1: Reaches +2.0D -> True Breakeven Lock (Zero Loss Secured)
+                elif price >= pair.base_be_sl and not pair.b2_trailed_to_be:
+                    pair.long_leg.trailing_sl = pair.base_be_sl
+                    pair.b2_trailed_to_be = True
+                    self.service.set_trading_stop(1, pair.long_leg.trailing_sl, pair.long_leg.tp_target, symbol=sym)
+                    console.print(f"\n[bold green]>>> [{sym} LONG B2 TRUE BE LOCK] SL set to {pair.base_be_sl:.2f} (Zero Loss Secured) <<<[/bold green]")
+                    self._csv_event(pair, pair.long_leg, "B2_RATCHET_BE", price)
+
+                # TP Hit (+3.5D Target)
+                if price >= pair.long_leg.tp_target:
+                    console.print(f"\n[bold green]>>> [{sym} LONG B2 TP HIT] @ {price:.2f} <<<[/bold green]")
+                    self.service.close_position(1, pair.long_leg.size, symbol=sym)
+                    pair.long_leg.status = "CLOSED_TP"
+                    pair.long_leg.exit_price = price
+                    self._csv_event(pair, pair.long_leg, "TP_HIT", price)
+                    self._close_pair_cycle(pair)
+                    return
+
+                # SL Hit (P0 or ratcheted)
+                elif price <= pair.long_leg.trailing_sl:
+                    console.print(f"\n[bold yellow]>>> [{sym} LONG B2 SL HIT] @ {price:.2f} <<<[/bold yellow]")
+                    self.service.close_position(1, pair.long_leg.size, symbol=sym)
+                    pair.long_leg.status = "CLOSED_SL"
+                    pair.long_leg.exit_price = price
+                    self._csv_event(pair, pair.long_leg, "SL_HIT", price)
+                    self._close_pair_cycle(pair)
+                    return
+
+        # Check if both legs ended
+        l_done = pair.long_leg is None or pair.long_leg.status != "ACTIVE"
+        s_done = pair.short_leg is None or pair.short_leg.status != "ACTIVE"
+        if l_done and s_done:
+            self._close_pair_cycle(pair)
+
+    def _process_legacy_tick(self, pair: PairState, price: Decimal) -> None:
+        """Process trailing ratchet, TP, and SL triggers on live price tick (legacy symmetric)."""
         sym          = pair.cfg.symbol
         sl_ratio     = pair.cfg.sl_ratio
         ratchet_step = pair.cfg.ratchet_step_ratio
@@ -574,7 +974,7 @@ class BybitTradingEngine:
                 console.print(f"\n[bold green]>>> [{sym} LONG TP HIT] @ {price:.2f} <<<[/bold green]")
                 self.service.close_position(1, pair.long_leg.size, symbol=sym)
                 self._csv_event(pair, pair.long_leg, "TP_HIT", price)
-                # Close counter Short leg immediately to bank net gains and prevent runaway 6% trend loss
+                # Close counter Short leg immediately to bank net gains and prevent runaway trend loss
                 if pair.short_leg and pair.short_leg.status == "ACTIVE":
                     logger.info(f"[{sym}] LONG hit TP -> Closed counter SHORT immediately at market to lock net gains.")
                     self.service.close_position(2, pair.short_leg.size, symbol=sym)
@@ -598,7 +998,7 @@ class BybitTradingEngine:
                 console.print(f"\n[bold green]>>> [{sym} SHORT TP HIT] @ {price:.2f} <<<[/bold green]")
                 self.service.close_position(2, pair.short_leg.size, symbol=sym)
                 self._csv_event(pair, pair.short_leg, "TP_HIT", price)
-                # Close counter Long leg immediately to bank net gains and prevent runaway 6% trend loss
+                # Close counter Long leg immediately to bank net gains and prevent runaway trend loss
                 if pair.long_leg and pair.long_leg.status == "ACTIVE":
                     logger.info(f"[{sym}] SHORT hit TP -> Closed counter LONG immediately at market to lock net gains.")
                     self.service.close_position(1, pair.long_leg.size, symbol=sym)
@@ -661,16 +1061,26 @@ class BybitTradingEngine:
             f"Net: ${net:+.2f} | Pair Cumulative: ${pair.cumulative_pnl:+.2f} <<<\n[/bold cyan]"
         )
 
-        # Reset legs
+        # Reset legs and state
         pair.long_leg = None
         pair.short_leg = None
+        pair.signal_direction = None
+        pair.entry_price = Decimal("0")
+        pair.entry_ts = 0.0
+        pair.bars_elapsed = 0
+        pair.b1_trailed = False
+        pair.b2_trailed_to_be = False
+        pair.b2_trailed_to_plus_1d = False
+        pair.base_be_sl = Decimal("0")
 
         if self.config.cooldown_secs > 0:
             pair.status = "COOLDOWN"
+            pair.phase = "COOLDOWN"
             pair.cooldown_until = time.time() + self.config.cooldown_secs
             pair.status_msg = f"Cooldown ({self.config.cooldown_secs}s)"
         else:
             pair.status = "SCANNING"
+            pair.phase = "SCANNING"
             pair.status_msg = "Scanning for next signal..."
         self._dump_state_json()
 

@@ -289,6 +289,8 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             self._handle_api_logs(qs)
         elif parsed.path == "/api/trades":
             self._handle_api_trades(qs)
+        elif parsed.path == "/api/clear-trades":
+            self._handle_api_clear_trades(qs)
         else:
             self.send_error(404, "Not Found")
 
@@ -394,6 +396,26 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         limit = int(qs.get("limit", [50])[0])
         trades = read_trade_history(limit=min(limit, 200))
         self._send_json({"trades": trades})
+
+    def _handle_api_clear_trades(self, qs: dict):
+        path = os.path.abspath(os.path.join(os.path.dirname(__file__), "bybit_trades.csv"))
+        cleared = False
+        try:
+            with open(path, "w", newline="", encoding="utf-8") as f:
+                csv.writer(f).writerow([
+                    "timestamp", "symbol", "cycle", "leg", "event",
+                    "price", "extreme_price", "trailing_sl", "tp_target",
+                    "leg_pnl_usd", "pair_cumulative_pnl",
+                ])
+            cleared = True
+        except Exception as e:
+            logger.warning(f"Failed to clear trades ledger: {e}")
+
+        # If redirect requested, send back to dashboard
+        if qs.get("redirect", ["0"])[0] in ["1", "true", "yes"]:
+            self._redirect("/dashboard")
+        else:
+            self._send_json({"success": cleared, "message": "Trade audit ledger cleared."})
 
     # ==========================================================================
     # HTML UI RENDERING
@@ -1003,7 +1025,10 @@ class TelemetryHandler(BaseHTTPRequestHandler):
 
     <div class="section-title">
       <span>Recent Trade Execution Audit</span>
-      <span style="font-size:12px; color:#64748b;">(Last 25 entries from bybit_trades.csv)</span>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span style="font-size:12px; color:#64748b;">(bybit_trades.csv)</span>
+        <a href="/api/clear-trades?redirect=1" class="btn" style="font-size:11px; padding:3px 8px; border-color:#475569;" onclick="return confirm('Clear trade history audit records?');">🧹 Clear History</a>
+      </div>
     </div>
     <div class="table-container">
       <table>

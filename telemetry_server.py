@@ -411,13 +411,14 @@ class TelemetryHandler(BaseHTTPRequestHandler):
   <style>
     * {{ box-sizing: border-box; margin: 0; padding: 0; }}
     body {{
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-family: 'Inter', sans-serif;
       background: #090d16;
       color: #e2e8f0;
       display: flex;
       align-items: center;
       justify-content: center;
       min-height: 100vh;
+      padding: 16px;
     }}
     .card {{
       background: #131b2e;
@@ -607,11 +608,12 @@ class TelemetryHandler(BaseHTTPRequestHandler):
   <style>
     * {{ box-sizing: border-box; margin: 0; padding: 0; }}
     body {{
-      font-family: 'Inter', sans-serif;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background: #080c14;
       color: #e2e8f0;
       padding: 24px;
       line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
     }}
     .container {{
       max-width: 1280px;
@@ -621,6 +623,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
       display: flex;
       justify-content: space-between;
       align-items: center;
+      gap: 16px;
       margin-bottom: 24px;
       padding-bottom: 16px;
       border-bottom: 1px solid #1e293b;
@@ -629,11 +632,18 @@ class TelemetryHandler(BaseHTTPRequestHandler):
       display: flex;
       align-items: center;
       gap: 12px;
+      flex-shrink: 0;
+    }}
+    .brand-title-wrap {{
+      display: flex;
+      align-items: center;
+      gap: 10px;
     }}
     .brand h1 {{
-      font-size: 22px;
+      font-size: 21px;
       font-weight: 700;
       letter-spacing: -0.5px;
+      white-space: nowrap;
     }}
     .pulse-dot {{
       width: 10px;
@@ -641,15 +651,31 @@ class TelemetryHandler(BaseHTTPRequestHandler):
       border-radius: 50%;
       background: {status_color};
       box-shadow: 0 0 10px {status_color};
+      flex-shrink: 0;
+    }}
+    .status-pill {{
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      border: 1px solid;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      white-space: nowrap;
+      flex-shrink: 0;
     }}
     .header-actions {{
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
+      flex-wrap: wrap;
     }}
     .btn {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
       padding: 8px 14px;
-      border-radius: 6px;
+      border-radius: 8px;
       font-size: 13px;
       font-weight: 600;
       cursor: pointer;
@@ -657,10 +683,17 @@ class TelemetryHandler(BaseHTTPRequestHandler):
       border: 1px solid #334155;
       background: #1e293b;
       color: #e2e8f0;
-      transition: all 0.2s;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      white-space: nowrap;
+      user-select: none;
     }}
     .btn:hover {{
       background: #334155;
+      border-color: #475569;
+      transform: translateY(-1px);
+    }}
+    .btn:active {{
+      transform: translateY(0);
     }}
     .btn-primary {{
       background: #0284c7;
@@ -669,6 +702,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
     }}
     .btn-primary:hover {{
       background: #0369a1;
+      border-color: #0369a1;
     }}
     .stats-grid {{
       display: grid;
@@ -680,18 +714,22 @@ class TelemetryHandler(BaseHTTPRequestHandler):
       background: #0f172a;
       border: 1px solid #1e293b;
       border-radius: 12px;
-      padding: 20px;
+      padding: 18px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2), 0 2px 4px -2px rgba(0, 0, 0, 0.2);
     }}
     .stat-title {{
-      font-size: 13px;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
       color: #94a3b8;
-      font-weight: 500;
+      font-weight: 600;
       margin-bottom: 6px;
     }}
     .stat-val {{
-      font-size: 26px;
+      font-size: 24px;
       font-weight: 700;
       letter-spacing: -0.5px;
+      font-family: 'JetBrains Mono', monospace;
     }}
     .stat-sub {{
       font-size: 12px;
@@ -699,18 +737,28 @@ class TelemetryHandler(BaseHTTPRequestHandler):
       margin-top: 4px;
     }}
     .section-title {{
-      font-size: 18px;
+      font-size: 16px;
       font-weight: 600;
-      margin-bottom: 14px;
+      margin-bottom: 12px;
       display: flex;
       justify-content: space-between;
-      align-items: center;
+      align-items: baseline;
+      flex-wrap: wrap;
+      gap: 6px;
+    }}
+    .section-title span:first-child {{
+      color: #f1f5f9;
+      font-weight: 600;
+    }}
+    .section-title span:last-child {{
+      font-size: 12px;
+      color: #64748b;
     }}
     .markets-grid {{
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
       gap: 16px;
-      margin-bottom: 28px;
+      margin-bottom: 24px;
     }}
     .market-card {{
       display: flex;
@@ -721,22 +769,19 @@ class TelemetryHandler(BaseHTTPRequestHandler):
       display: flex;
       justify-content: space-between;
       align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
     }}
     .sym-badge {{
       font-size: 16px;
       font-weight: 700;
       color: #38bdf8;
-    }}
-    .status-pill {{
-      font-size: 11px;
-      font-weight: 600;
-      border: 1px solid;
-      padding: 2px 8px;
-      border-radius: 12px;
-      margin-left: 8px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
     }}
     .sym-price {{
-      font-size: 18px;
+      font-size: 17px;
       font-weight: 700;
       font-family: 'JetBrains Mono', monospace;
     }}
@@ -744,6 +789,10 @@ class TelemetryHandler(BaseHTTPRequestHandler):
       font-size: 12px;
       color: #94a3b8;
       font-family: 'JetBrains Mono', monospace;
+      background: #090e1a;
+      padding: 6px 10px;
+      border-radius: 6px;
+      border: 1px solid #1e293b;
     }}
     .legs-grid {{
       display: grid;
@@ -751,10 +800,10 @@ class TelemetryHandler(BaseHTTPRequestHandler):
       gap: 10px;
     }}
     .leg-box {{
-      padding: 10px;
+      padding: 10px 12px;
       border-radius: 8px;
       font-size: 12px;
-      background: #182234;
+      background: #151f32;
       border: 1px solid #243248;
     }}
     .leg-box.empty {{
@@ -763,6 +812,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
       display: flex;
       align-items: center;
       justify-content: center;
+      min-height: 52px;
     }}
     .leg-header {{
       display: flex;
@@ -774,9 +824,20 @@ class TelemetryHandler(BaseHTTPRequestHandler):
       color: #94a3b8;
       font-family: 'JetBrains Mono', monospace;
       font-size: 11px;
+      line-height: 1.4;
+    }}
+    .table-container {{
+      width: 100%;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      border-radius: 12px;
+      border: 1px solid #1e293b;
+      background: #0f172a;
+      margin-bottom: 24px;
     }}
     table {{
       width: 100%;
+      min-width: 600px;
       border-collapse: collapse;
       font-size: 13px;
     }}
@@ -787,29 +848,108 @@ class TelemetryHandler(BaseHTTPRequestHandler):
     }}
     th {{
       color: #94a3b8;
-      font-weight: 500;
+      font-weight: 600;
       background: #131d31;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
     }}
     .badge {{
-      padding: 2px 6px;
-      border-radius: 4px;
+      padding: 3px 8px;
+      border-radius: 6px;
       font-size: 11px;
-      font-weight: 600;
+      font-weight: 700;
+      display: inline-block;
     }}
-    .badge.buy {{ background: rgba(16, 185, 129, 0.2); color: #34d399; }}
-    .badge.sell {{ background: rgba(239, 68, 68, 0.2); color: #f87171; }}
+    .badge.buy {{ background: rgba(16, 185, 129, 0.18); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }}
+    .badge.sell {{ background: rgba(239, 68, 68, 0.18); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }}
     .terminal {{
       background: #04060a;
       border: 1px solid #1e293b;
-      border-radius: 8px;
+      border-radius: 10px;
       padding: 14px;
       font-family: 'JetBrains Mono', monospace;
-      font-size: 12px;
+      font-size: 11px;
       color: #94a3b8;
-      max-height: 380px;
+      max-height: 360px;
       overflow-y: auto;
+      overflow-x: auto;
       white-space: pre-wrap;
-      line-height: 1.4;
+      word-break: break-all;
+      line-height: 1.45;
+    }}
+    .hide-mobile {{
+      display: inline;
+    }}
+
+    /* Mobile Responsive Optimizations */
+    @media (max-width: 768px) {{
+      body {{
+        padding: 14px 10px;
+      }}
+      header {{
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+        margin-bottom: 16px;
+        padding-bottom: 14px;
+      }}
+      .brand {{
+        width: 100%;
+        justify-content: space-between;
+      }}
+      .brand h1 {{
+        font-size: 17px;
+        white-space: normal;
+      }}
+      .hide-mobile {{
+        display: none;
+      }}
+      .header-actions {{
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 6px;
+        width: 100%;
+      }}
+      .header-actions .btn {{
+        padding: 8px 4px;
+        font-size: 11px;
+        text-align: center;
+        justify-content: center;
+      }}
+      .stats-grid {{
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+        margin-bottom: 18px;
+      }}
+      .card {{
+        padding: 12px;
+      }}
+      .stat-title {{
+        font-size: 10px;
+      }}
+      .stat-val {{
+        font-size: 18px;
+      }}
+      .stat-sub {{
+        font-size: 10px;
+      }}
+      .markets-grid {{
+        grid-template-columns: 1fr;
+        gap: 10px;
+      }}
+      .legs-grid {{
+        grid-template-columns: 1fr;
+        gap: 8px;
+      }}
+    }}
+    @media (max-width: 380px) {{
+      .header-actions {{
+        grid-template-columns: repeat(2, 1fr);
+      }}
+      .brand h1 {{
+        font-size: 15px;
+      }}
     }}
   </style>
 </head>
@@ -817,15 +957,17 @@ class TelemetryHandler(BaseHTTPRequestHandler):
   <div class="container">
     <header>
       <div class="brand">
-        <div class="pulse-dot"></div>
-        <h1>Bybit Multi-Pair Hedge Bot</h1>
+        <div class="brand-title-wrap">
+          <div class="pulse-dot"></div>
+          <h1>Bybit <span class="hide-mobile">Multi-Pair </span>Hedge Bot</h1>
+        </div>
         <span class="status-pill" style="border-color:{status_color}; color:{status_color}">{status_text}</span>
       </div>
       <div class="header-actions">
-        <a href="/api/ai-summary" class="btn" target="_blank">AI Summary (MD)</a>
-        <a href="/api/status" class="btn" target="_blank">JSON API</a>
-        <button onclick="location.reload()" class="btn btn-primary">Refresh</button>
-        <a href="/logout" class="btn">Logout</a>
+        <a href="/api/ai-summary" class="btn" target="_blank" title="AI Summary Markdown">🤖 AI View</a>
+        <a href="/api/status" class="btn" target="_blank" title="JSON Status API">⚡ JSON</a>
+        <button onclick="location.reload()" class="btn btn-primary" title="Refresh Telemetry">🔄 Refresh</button>
+        <a href="/logout" class="btn" title="Logout">🚪 Exit</a>
       </div>
     </header>
 
@@ -847,7 +989,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
       </div>
       <div class="card">
         <div class="stat-title">System Uptime</div>
-        <div class="stat-val" style="font-size: 20px; margin-top:4px;">{uptime_str}</div>
+        <div class="stat-val" style="font-size: 18px; margin-top:4px;">{uptime_str}</div>
         <div class="stat-sub">Scans: {state.get('scan_count', 0)} | Leverage: {state.get('leverage', 4)}x</div>
       </div>
     </div>
@@ -863,7 +1005,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
       <span>Recent Trade Execution Audit</span>
       <span style="font-size:12px; color:#64748b;">(Last 25 entries from bybit_trades.csv)</span>
     </div>
-    <div class="card" style="padding:0; overflow:hidden; margin-bottom: 28px;">
+    <div class="table-container">
       <table>
         <thead>
           <tr>

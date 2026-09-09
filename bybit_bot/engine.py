@@ -776,6 +776,7 @@ class BybitTradingEngine:
             if pair.signal_direction == "bullish":
                 # BRANCH 1: Signal Was Right (Market expands +1.0D upward)
                 if price >= entry_px * (Decimal("1") + d_val):
+                    pair.phase = "RUNNER_B1"
                     confirm_px = price
                     # 1. Collapse 30% Counter Short Leg
                     if pair.short_leg and pair.short_leg.status == "ACTIVE":
@@ -799,7 +800,6 @@ class BybitTradingEngine:
                         self.service.set_trading_stop(1, pair.long_leg.trailing_sl, pair.long_leg.tp_target, symbol=sym)
                         self._csv_event(pair, pair.long_leg, "B1_ARMED", confirm_px)
 
-                    pair.phase = "RUNNER_B1"
                     pair.status_msg = f"RUNNER B1 (Long @ {price:.2f}, SL: {long_sl_be:.2f}, TP: {long_tp:.2f})"
                     console.print(
                         f"\n[bold green]>>> [{sym}] BRANCH 1 HIT (+1.0D)! Counter Short collapsed. "
@@ -810,6 +810,7 @@ class BybitTradingEngine:
 
                 # BRANCH 2: Signal Was Wrong / Trap (Market dumps -1.0D downward)
                 elif price <= entry_px * (Decimal("1") - d_val):
+                    pair.phase = "RUNNER_B2"
                     confirm_px = price
                     # 1. Collapse Trapped 100% Primary Long Leg
                     if pair.long_leg and pair.long_leg.status == "ACTIVE":
@@ -849,7 +850,6 @@ class BybitTradingEngine:
                         self.service.set_trading_stop(2, pair.short_leg.trailing_sl, pair.short_leg.tp_target, symbol=sym)
                         self._csv_event(pair, pair.short_leg, "B2_SIZE_FLIP", confirm_px)
 
-                    pair.phase = "RUNNER_B2"
                     pair.status_msg = f"RUNNER B2 (Short Size-Flip @ {price:.2f}, SL: {curr_sl:.2f}, TP: {tp_level:.2f})"
                     console.print(
                         f"\n[bold yellow]>>> [{sym}] BRANCH 2 HIT (-1.0D)! Long collapsed. "
@@ -861,6 +861,7 @@ class BybitTradingEngine:
             elif pair.signal_direction == "bearish":
                 # BRANCH 1: Signal Was Right (Market expands -1.0D downward)
                 if price <= entry_px * (Decimal("1") - d_val):
+                    pair.phase = "RUNNER_B1"
                     confirm_px = price
                     # 1. Collapse 30% Counter Long Leg
                     if pair.long_leg and pair.long_leg.status == "ACTIVE":
@@ -884,7 +885,6 @@ class BybitTradingEngine:
                         self.service.set_trading_stop(2, pair.short_leg.trailing_sl, pair.short_leg.tp_target, symbol=sym)
                         self._csv_event(pair, pair.short_leg, "B1_ARMED", confirm_px)
 
-                    pair.phase = "RUNNER_B1"
                     pair.status_msg = f"RUNNER B1 (Short @ {price:.2f}, SL: {short_sl_be:.2f}, TP: {short_tp:.2f})"
                     console.print(
                         f"\n[bold green]>>> [{sym}] BRANCH 1 HIT (-1.0D)! Counter Long collapsed. "
@@ -895,6 +895,7 @@ class BybitTradingEngine:
 
                 # BRANCH 2: Signal Was Wrong / Trap (Market pumps +1.0D upward)
                 elif price >= entry_px * (Decimal("1") + d_val):
+                    pair.phase = "RUNNER_B2"
                     confirm_px = price
                     # 1. Collapse Trapped 100% Primary Short Leg
                     if pair.short_leg and pair.short_leg.status == "ACTIVE":
@@ -934,7 +935,6 @@ class BybitTradingEngine:
                         self.service.set_trading_stop(1, pair.long_leg.trailing_sl, pair.long_leg.tp_target, symbol=sym)
                         self._csv_event(pair, pair.long_leg, "B2_SIZE_FLIP", confirm_px)
 
-                    pair.phase = "RUNNER_B2"
                     pair.status_msg = f"RUNNER B2 (Long Size-Flip @ {price:.2f}, SL: {curr_sl:.2f}, TP: {tp_level:.2f})"
                     console.print(
                         f"\n[bold yellow]>>> [{sym}] BRANCH 2 HIT (+1.0D)! Short collapsed. "

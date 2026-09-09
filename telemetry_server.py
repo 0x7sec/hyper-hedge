@@ -18,6 +18,107 @@ from datetime import datetime
 from urllib.parse import parse_qs, urlparse
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from http.cookies import SimpleCookie
+import time
+import urllib.request
+from decimal import Decimal
+
+# Import compute_indicators from backtest
+try:
+    from backtest import compute_indicators
+except ImportError:
+    compute_indicators = None
+
+# In-memory candle cache: { (symbol, interval, limit): (timestamp, data) }
+CANDLE_CACHE = {}
+CANDLE_CACHE_TTL = 8.0  # seconds
+
+
+def fetch_candles_with_indicators(symbol: str, interval: str = "60", limit: int = 40) -> dict:
+    """Fetch recent klines from Bybit linear API and compute EMA9, EMA21, ADX, and % change."""
+    cache_key = (symbol, str(interval), limit)
+    now = time.time()
+    if cache_key in CANDLE_CACHE:
+        cached_ts, cached_data = CANDLE_CACHE[cache_key]
+        if now - cached_ts < CANDLE_CACHE_TTL:
+            return cached_data
+
+    is_testnet = os.environ.get("TESTNET", "true").lower() in ["1", "true", "yes"]
+    domain = "api-testnet.bybit.com" if is_testnet else "api.bybit.com"
+    api_interval = str(interval)
+    url = f"https://{domain}/v5/market/kline?category=linear&symbol={symbol}&interval={api_interval}&limit={min(limit, 100)}"
+
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "BybitHedgeBot/1.0"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+    except Exception as e:
+        return {"symbol": symbol, "interval": interval, "error": str(e), "candles": []}
+
+    raw_list = data.get("result", {}).get("list", [])
+    if not raw_list:
+        return {"symbol": symbol, "interval": interval, "error": "No kline data", "candles": []}
+
+    raw_list.reverse()
+    parsed = []
+    for k in raw_list:
+        try:
+            parsed.append({
+                "timestamp": int(k[0]),
+                "datetime": datetime.fromtimestamp(int(k[0]) / 1000),
+                "open": Decimal(str(k[1])),
+                "high": Decimal(str(k[2])),
+                "low": Decimal(str(k[3])),
+                "close": Decimal(str(k[4])),
+                "volume": Decimal(str(k[5])),
+            })
+        except Exception:
+            continue
+
+    if compute_indicators and len(parsed) >= 5:
+        try:
+            compute_indicators(parsed, fast_periods=[9, 21], adx_period=14)
+        except Exception:
+            pass
+
+    candles_out = []
+    for c in parsed:
+        dt = c["datetime"]
+        time_str = dt.strftime("%H:%M") if interval not in ["D", "W"] else dt.strftime("%m-%d")
+        f_ema = round(float(c.get("ema_9")), 2) if c.get("ema_9") is not None else None
+        s_ema = round(float(c.get("ema_21")), 2) if c.get("ema_21") is not None else None
+        adx_val = round(float(c.get("adx")), 1) if c.get("adx") is not None else None
+
+        candles_out.append({
+            "t": int(c["timestamp"] / 1000),
+            "ts": time_str,
+            "o": float(c["open"]),
+            "h": float(c["high"]),
+            "l": float(c["low"]),
+            "c": float(c["close"]),
+            "v": float(c["volume"]),
+            "ema9": f_ema,
+            "ema21": s_ema,
+            "adx": adx_val,
+        })
+
+    first_open = candles_out[0]["o"] if candles_out else 0.0
+    latest_close = candles_out[-1]["c"] if candles_out else 0.0
+    change_pct = ((latest_close - first_open) / first_open * 100) if first_open > 0 else 0.0
+    change_usd = latest_close - first_open
+
+    res_data = {
+        "symbol": symbol,
+        "interval": interval,
+        "first_open": first_open,
+        "latest_close": latest_close,
+        "change_pct": round(change_pct, 2),
+        "change_usd": round(change_usd, 2),
+        "count": len(candles_out),
+        "candles": candles_out,
+    }
+    CANDLE_CACHE[cache_key] = (now, res_data)
+    return res_data
+
 
 # Load environment variables from .env
 ENV_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), ".env"))
@@ -291,6 +392,8 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             self._handle_api_trades(qs)
         elif parsed.path == "/api/clear-trades":
             self._handle_api_clear_trades(qs)
+        elif parsed.path == "/api/candles":
+            self._handle_api_candles(qs)
         else:
             self.send_error(404, "Not Found")
 
@@ -426,6 +529,13 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             self._redirect("/dashboard")
         else:
             self._send_json({"success": cleared, "message": "Trade audit ledger cleared."})
+
+    def _handle_api_candles(self, qs: dict):
+        sym = qs.get("symbol", ["BTCUSDT"])[0].upper()
+        interval = qs.get("interval", ["60"])[0]
+        limit = int(qs.get("limit", [40])[0])
+        data = fetch_candles_with_indicators(sym, interval=interval, limit=limit)
+        self._send_json(data)
 
     # ==========================================================================
     # HTML UI RENDERING
@@ -597,14 +707,39 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                 </div>"""
 
             market_cards.append(f"""
-            <div class="card market-card">
+            <div class="card market-card" data-symbol="{sym}">
               <div class="market-header">
                 <div>
                   <span class="sym-badge">{sym}</span>
                   <span class="status-pill" style="border-color:{p_color}; color:{p_color}">{p_status}</span>
                 </div>
-                <div class="sym-price">{px_str}</div>
+                <div style="display:flex; align-items:center; gap:8px;">
+                  <span class="pct-badge" id="pct-{sym}">--%</span>
+                  <div class="sym-price">{px_str}</div>
+                </div>
               </div>
+
+              <!-- Interactive Mini Graph Controls -->
+              <div class="chart-controls">
+                <div class="tf-pills" id="tf-pills-{sym}">
+                  <button class="tf-btn" data-tf="15" onclick="changeChartTf('{sym}', '15')">15m</button>
+                  <button class="tf-btn active" data-tf="60" onclick="changeChartTf('{sym}', '60')">1h</button>
+                  <button class="tf-btn" data-tf="240" onclick="changeChartTf('{sym}', '240')">4h</button>
+                  <button class="tf-btn" data-tf="D" onclick="changeChartTf('{sym}', 'D')">1D</button>
+                </div>
+                <div class="chart-legend">
+                  <span class="legend-item"><span class="legend-dot" style="background:#38bdf8;"></span>EMA9</span>
+                  <span class="legend-item"><span class="legend-dot" style="background:#f59e0b;"></span>EMA21</span>
+                  <span class="legend-item"><span class="legend-dot" style="background:#a855f7;"></span>ADX</span>
+                </div>
+              </div>
+
+              <!-- Interactive Canvas Chart -->
+              <div class="chart-container" id="chart-wrap-{sym}">
+                <div class="chart-info-bar" id="info-{sym}">Loading candles...</div>
+                <canvas id="chart-{sym}" class="market-chart"></canvas>
+              </div>
+
               <div class="market-ind">{ind}</div>
               <div class="legs-grid">
                 {long_html}
@@ -826,6 +961,117 @@ class TelemetryHandler(BaseHTTPRequestHandler):
       font-size: 17px;
       font-weight: 700;
       font-family: 'JetBrains Mono', monospace;
+    }}
+    .chart-controls {{
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 6px;
+      margin-top: 2px;
+      margin-bottom: 6px;
+      flex-wrap: wrap;
+    }}
+    .tf-pills {{
+      display: flex;
+      gap: 3px;
+      background: #090e1a;
+      padding: 2px;
+      border-radius: 6px;
+      border: 1px solid #1e293b;
+    }}
+    .tf-btn {{
+      background: transparent;
+      border: none;
+      color: #94a3b8;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }}
+    .tf-btn:hover {{
+      color: #f1f5f9;
+      background: rgba(255,255,255,0.05);
+    }}
+    .tf-btn.active {{
+      background: #1e293b;
+      color: #38bdf8;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+    }}
+    .chart-legend {{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 10px;
+      font-family: 'JetBrains Mono', monospace;
+    }}
+    .legend-item {{
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      color: #94a3b8;
+    }}
+    .legend-dot {{
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      display: inline-block;
+    }}
+    .chart-container {{
+      position: relative;
+      width: 100%;
+      height: 195px;
+      background: #060a12;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 6px;
+    }}
+    .market-chart {{
+      width: 100%;
+      height: 100%;
+      display: block;
+      cursor: crosshair;
+    }}
+    .chart-info-bar {{
+      position: absolute;
+      top: 3px;
+      left: 6px;
+      right: 6px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      color: #94a3b8;
+      pointer-events: none;
+      display: flex;
+      justify-content: space-between;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      z-index: 2;
+      background: rgba(6, 10, 18, 0.75);
+      padding: 2px 5px;
+      border-radius: 4px;
+    }}
+    .pct-badge {{
+      font-size: 12px;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+      padding: 2px 7px;
+      border-radius: 6px;
+      display: inline-flex;
+      align-items: center;
+      letter-spacing: -0.2px;
+    }}
+    .pct-badge.up {{
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }}
+    .pct-badge.down {{
+      background: rgba(239, 68, 68, 0.15);
+      color: #f87171;
+      border: 1px solid rgba(239, 68, 68, 0.3);
     }}
     .market-ind {{
       font-size: 12px;
@@ -1077,8 +1323,289 @@ class TelemetryHandler(BaseHTTPRequestHandler):
   </div>
 
   <script>
-    // Auto-refresh every 10 seconds
-    setTimeout(() => {{ location.reload(); }}, 10000);
+    const activeTfs = {{}};
+    const chartData = {{}};
+
+    function initCharts() {{
+      const cards = document.querySelectorAll('.market-card');
+      cards.forEach(card => {{
+        const sym = card.getAttribute('data-symbol');
+        if (!sym) return;
+        const savedTf = localStorage.getItem('tf_' + sym) || '60';
+        activeTfs[sym] = savedTf;
+        updateTfButtons(sym, savedTf);
+        setupCanvasEvents(sym);
+        loadChart(sym, savedTf);
+      }});
+    }}
+
+    function updateTfButtons(sym, tf) {{
+      const wrap = document.getElementById('tf-pills-' + sym);
+      if (!wrap) return;
+      wrap.querySelectorAll('.tf-btn').forEach(btn => {{
+        btn.classList.toggle('active', btn.getAttribute('data-tf') === tf);
+      }});
+    }}
+
+    function changeChartTf(sym, tf) {{
+      activeTfs[sym] = tf;
+      localStorage.setItem('tf_' + sym, tf);
+      updateTfButtons(sym, tf);
+      loadChart(sym, tf);
+    }}
+
+    async function loadChart(sym, tf) {{
+      const info = document.getElementById('info-' + sym);
+      try {{
+        const res = await fetch(`/api/candles?symbol=${{sym}}&interval=${{tf}}&limit=40`);
+        if (!res.ok) throw new Error('API error');
+        const data = await res.json();
+        if (!data.candles || data.candles.length === 0) {{
+          if (info) info.textContent = 'No candle data';
+          return;
+        }}
+        chartData[sym] = data;
+
+        // Update movement % badge
+        const pctBadge = document.getElementById('pct-' + sym);
+        if (pctBadge) {{
+          const chg = data.change_pct || 0;
+          pctBadge.textContent = (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%';
+          pctBadge.className = 'pct-badge ' + (chg >= 0 ? 'up' : 'down');
+        }}
+
+        renderCanvasChart(sym, data);
+      }} catch (e) {{
+        if (info) info.textContent = 'Chart load error';
+      }}
+    }}
+
+    function renderCanvasChart(sym, data, hoverIdx = -1) {{
+      const canvas = document.getElementById('chart-' + sym);
+      const info = document.getElementById('info-' + sym);
+      if (!canvas) return;
+
+      const ctx = canvas.getContext('2d');
+      const rect = canvas.getBoundingClientRect();
+      const w = rect.width;
+      const h = rect.height || 195;
+      const dpr = window.devicePixelRatio || 1;
+
+      canvas.width = Math.floor(w * dpr);
+      canvas.height = Math.floor(h * dpr);
+      ctx.resetTransform();
+      ctx.scale(dpr, dpr);
+
+      const candles = data.candles;
+      if (!candles || candles.length === 0) return;
+
+      const topH = Math.floor(h * 0.70);
+      const botH = h - topH;
+      const rightMargin = 48;
+      const plotW = w - rightMargin;
+      const n = candles.length;
+      const slotW = plotW / n;
+      const candleW = Math.max(2, Math.min(10, slotW * 0.68));
+
+      // Calculate price bounds (candles + EMAs)
+      let minP = Infinity, maxP = -Infinity;
+      candles.forEach(c => {{
+        minP = Math.min(minP, c.l);
+        maxP = Math.max(maxP, c.h);
+        if (c.ema9) {{ minP = Math.min(minP, c.ema9); maxP = Math.max(maxP, c.ema9); }}
+        if (c.ema21) {{ minP = Math.min(minP, c.ema21); maxP = Math.max(maxP, c.ema21); }}
+      }});
+      const pPad = (maxP - minP) * 0.08 || 1;
+      minP -= pPad; maxP += pPad;
+
+      function yP(p) {{
+        return topH - ((p - minP) / (maxP - minP)) * (topH - 22) - 10;
+      }}
+
+      // ADX bounds (0 to 60)
+      let maxAdx = 55;
+      candles.forEach(c => {{ if (c.adx) maxAdx = Math.max(maxAdx, c.adx); }});
+      maxAdx = Math.min(100, Math.ceil(maxAdx / 10) * 10);
+
+      function yA(a) {{
+        return h - ((a - 0) / maxAdx) * (botH - 12) - 4;
+      }}
+
+      // 1. Draw horizontal grid lines & price labels
+      ctx.lineWidth = 1;
+      ctx.font = '9px JetBrains Mono, monospace';
+      ctx.fillStyle = '#64748b';
+      ctx.textAlign = 'left';
+
+      const gridSteps = 3;
+      for (let i = 0; i <= gridSteps; i++) {{
+        const gVal = minP + (maxP - minP) * (i / gridSteps);
+        const gy = yP(gVal);
+        ctx.strokeStyle = '#151f32';
+        ctx.beginPath();
+        ctx.moveTo(0, gy);
+        ctx.lineTo(plotW, gy);
+        ctx.stroke();
+
+        const pLabel = gVal >= 1000 ? gVal.toFixed(0) : (gVal >= 10 ? gVal.toFixed(2) : gVal.toFixed(3));
+        ctx.fillText(pLabel, plotW + 5, gy + 3);
+      }}
+
+      // 2. Draw Candlesticks
+      candles.forEach((c, i) => {{
+        const cx = i * slotW + slotW / 2;
+        const isUp = c.c >= c.o;
+        const col = isUp ? '#10b981' : '#ef4444';
+
+        ctx.strokeStyle = col;
+        ctx.fillStyle = col;
+
+        // Wick
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(cx, yP(c.h));
+        ctx.lineTo(cx, yP(c.l));
+        ctx.stroke();
+
+        // Body
+        const bodyTop = Math.min(yP(c.o), yP(c.c));
+        const bodyH = Math.max(1.5, Math.abs(yP(c.c) - yP(c.o)));
+        ctx.fillRect(cx - candleW / 2, bodyTop, candleW, bodyH);
+      }});
+
+      // 3. Draw EMA 9 line (Sky Blue)
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 1.8;
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      let started = false;
+      candles.forEach((c, i) => {{
+        if (c.ema9 != null) {{
+          const cx = i * slotW + slotW / 2;
+          const cy = yP(c.ema9);
+          if (!started) {{ ctx.moveTo(cx, cy); started = true; }}
+          else ctx.lineTo(cx, cy);
+        }}
+      }});
+      ctx.stroke();
+
+      // 4. Draw EMA 21 line (Amber)
+      ctx.strokeStyle = '#f59e0b';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      started = false;
+      candles.forEach((c, i) => {{
+        if (c.ema21 != null) {{
+          const cx = i * slotW + slotW / 2;
+          const cy = yP(c.ema21);
+          if (!started) {{ ctx.moveTo(cx, cy); started = true; }}
+          else ctx.lineTo(cx, cy);
+        }}
+      }});
+      ctx.stroke();
+
+      // 5. Draw ADX Sub-Panel
+      ctx.strokeStyle = '#1e293b';
+      ctx.beginPath();
+      ctx.moveTo(0, topH);
+      ctx.lineTo(w, topH);
+      ctx.stroke();
+
+      // ADX 25 threshold line
+      const y25 = yA(25);
+      ctx.setLineDash([3, 3]);
+      ctx.strokeStyle = '#475569';
+      ctx.beginPath();
+      ctx.moveTo(0, y25);
+      ctx.lineTo(plotW, y25);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#64748b';
+      ctx.fillText('25', plotW + 5, y25 + 3);
+
+      // ADX line (Purple)
+      ctx.beginPath();
+      let adxStarted = false;
+      candles.forEach((c, i) => {{
+        if (c.adx != null) {{
+          const cx = i * slotW + slotW / 2;
+          const cy = yA(c.adx);
+          if (!adxStarted) {{ ctx.moveTo(cx, cy); adxStarted = true; }}
+          else ctx.lineTo(cx, cy);
+        }}
+      }});
+      ctx.strokeStyle = '#a855f7';
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+
+      // 6. Crosshair & Hover Tooltip
+      const selIdx = (hoverIdx >= 0 && hoverIdx < n) ? hoverIdx : (n - 1);
+      const sel = candles[selIdx];
+      if (sel && info) {{
+        const dirCol = sel.c >= sel.o ? '#10b981' : '#ef4444';
+        const f9 = sel.ema9 ? sel.ema9.toFixed(1) : '--';
+        const f21 = sel.ema21 ? sel.ema21.toFixed(1) : '--';
+        const ax = sel.adx ? sel.adx.toFixed(1) : '--';
+        info.innerHTML = `<span><b>${{sel.ts}}</b> <b style="color:${{dirCol}}">C:${{sel.c}}</b> O:${{sel.o}} H:${{sel.h}} L:${{sel.l}}</span>` +
+                         `<span><b style="color:#38bdf8">EMA9:${{f9}}</b> <b style="color:#f59e0b">EMA21:${{f21}}</b> <b style="color:#a855f7">ADX:${{ax}}</b></span>`;
+      }}
+
+      if (hoverIdx >= 0 && hoverIdx < n) {{
+        const hx = hoverIdx * slotW + slotW / 2;
+        ctx.setLineDash([2, 2]);
+        ctx.strokeStyle = '#94a3b8';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(hx, 0);
+        ctx.lineTo(hx, h);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }}
+    }}
+
+    function setupCanvasEvents(sym) {{
+      const canvas = document.getElementById('chart-' + sym);
+      if (!canvas) return;
+
+      function handleMove(e) {{
+        const data = chartData[sym];
+        if (!data || !data.candles) return;
+        const rect = canvas.getBoundingClientRect();
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const x = clientX - rect.left;
+        const plotW = rect.width - 48;
+        const idx = Math.floor((x / plotW) * data.candles.length);
+        renderCanvasChart(sym, data, Math.max(0, Math.min(data.candles.length - 1, idx)));
+      }}
+
+      function handleLeave() {{
+        const data = chartData[sym];
+        if (data) renderCanvasChart(sym, data, -1);
+      }}
+
+      canvas.addEventListener('mousemove', handleMove);
+      canvas.addEventListener('touchmove', handleMove, {{ passive: true }});
+      canvas.addEventListener('mouseleave', handleLeave);
+      canvas.addEventListener('touchend', handleLeave);
+    }}
+
+    // Initialize charts on window load
+    window.addEventListener('DOMContentLoaded', initCharts);
+    window.addEventListener('resize', () => {{
+      Object.keys(chartData).forEach(sym => {{
+        if (chartData[sym]) renderCanvasChart(sym, chartData[sym]);
+      }});
+    }});
+
+    // Refresh charts every 15s in background
+    setInterval(() => {{
+      Object.keys(activeTfs).forEach(sym => {{
+        loadChart(sym, activeTfs[sym]);
+      }});
+    }}, 15000);
+
+    // Auto-refresh full page every 30 seconds
+    setTimeout(() => {{ location.reload(); }}, 30000);
     // Scroll terminal to bottom
     const term = document.getElementById('term');
     if (term) term.scrollTop = term.scrollHeight;

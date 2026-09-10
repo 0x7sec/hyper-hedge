@@ -952,7 +952,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             return
 
         symbol = str(payload.get("symbol", "BTCUSDT")).upper()
-        limit = int(payload.get("limit", 2000))
+        limit = int(payload.get("bars") or payload.get("limit") or 2000)
         custom_params = {}
         for k in ["d_pct", "confirm_mult", "b1_tp_mult", "b2_tp_mult", "leverage"]:
             if k in payload:

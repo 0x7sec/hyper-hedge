@@ -418,6 +418,35 @@ def read_trade_history(limit: int = 100) -> list:
     return trades
 
 
+def format_bybit_fee(fee_val: float) -> str:
+    """Format Bybit fee e.g. 0.0121 USDT, 0.33018567 USDT matching exchange Closed PnL UI."""
+    if abs(fee_val) < 1e-8:
+        return "0.0000 USDT"
+    s = f"{fee_val:.8f}".rstrip("0").rstrip(".")
+    parts = s.split(".")
+    if len(parts) == 2 and len(parts[1]) < 4:
+        s = parts[0] + "." + parts[1].ljust(4, "0")
+    elif len(parts) == 1:
+        s = parts[0] + ".0000"
+    return f"{s} USDT"
+
+
+def render_coin_badge(symbol: str) -> str:
+    """Render coin icon and bold symbol badge matching Bybit table Contracts column."""
+    s = symbol.upper()
+    if "BTC" in s:
+        icon = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;"><circle cx="12" cy="12" r="11" fill="#f7931a"/><path d="M15.5 10.5c.3-1.5-.9-2.3-2.5-2.8l.5-2-1.2-.3-.5 2c-.3-.1-.7-.2-1-.2l.5-2-1.2-.3-.5 2-2.5-.6-.4 1.4s.9.2.9.2c.5.1.6.5.6.7l-.6 2.4c0 0 .1 0 .1 0l-.1 0-.8 3.3c-.1.2-.2.4-.6.3 0 0-.9-.2-.9-.2l-.6 1.5 2.4.6c.4.1.7.2 1.1.2l-.5 2.1 1.2.3.5-2c.3.1.7.2 1 .2l-.5 2 1.2.3.5-2.1c2.1.4 3.7.2 4.4-1.7.5-1.5 0-2.4-1.1-3 .8-.2 1.4-.7 1.6-1.8zm-2.8 4c-.4 1.5-3 .7-3.8.5l.7-2.8c.8.2 3.5.6 3.1 2.3zm.4-4c-.3 1.4-2.5.7-3.2.5l.6-2.5c.7.2 2.9.5 2.6 2z" fill="#fff"/></svg>'
+    elif "ETH" in s:
+        icon = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;"><circle cx="12" cy="12" r="11" fill="#627eea"/><path d="M12 4v6.6l5.6 2.5L12 4z" fill="#fff" fill-opacity=".6"/><path d="M12 4L6.4 13.1l5.6-2.5V4z" fill="#fff"/><path d="M12 17.5v4.5l5.6-7.8L12 17.5z" fill="#fff" fill-opacity=".6"/><path d="M12 22v-4.5L6.4 14.2L12 22z" fill="#fff"/><path d="M12 16.5l5.6-3.3L12 10.6v5.9z" fill="#fff" fill-opacity=".2"/><path d="M6.4 13.2l5.6 3.3v-5.9l-5.6 2.6z" fill="#fff" fill-opacity=".6"/></svg>'
+    elif "SOL" in s:
+        icon = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;"><circle cx="12" cy="12" r="11" fill="#0f172a" stroke="#14F195" stroke-width="1.5"/><path d="M7 16h8.5l1.5-1.5H8.5L7 16zm0-7h8.5l1.5-1.5H8.5L7 9zm10 3.5H8.5L7 14h8.5l1.5-1.5z" fill="#14F195"/></svg>'
+    elif "XAU" in s or "PAXG" in s or "GOLD" in s:
+        icon = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;"><circle cx="12" cy="12" r="11" fill="#eab308"/><path d="M7 15l2-6h6l2 6H7zm2.5-1.5h5l-.8-3h-3.4l-.8 3z" fill="#fff"/></svg>'
+    else:
+        icon = '<span style="display:inline-block; width:20px; height:20px; border-radius:50%; background:#334155; color:#cbd5e1; font-size:10px; line-height:20px; text-align:center; flex-shrink:0;">●</span>'
+    return f'<div style="display:inline-flex; align-items:center; gap:8px;">{icon}<span style="font-weight:700; color:#f8fafc;">{symbol}</span></div>'
+
+
 class TelemetryHandler(BaseHTTPRequestHandler):
     server_version = "BybitHedgeTelemetry/1.0"
 
@@ -705,9 +734,9 @@ class TelemetryHandler(BaseHTTPRequestHandler):
 
         if recent_exchange_trades:
             md.append("## Bybit Exchange Closed PnL Ledger (UTA V5)")
-            md.append("| Timestamp | Contracts | Type | Qty | Entry Price | Exit Price | Opening Fee | Closing Fee | Funding Fee | Realized Net PnL |")
-            md.append("|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|")
-            for t in recent_exchange_trades[:8]:
+            md.append("| Contracts | Qty | Entry Price | Exit Price | Trade Type | Closed P&L | Result | Open Trade Volume | Closed Trade Volume | Opening Fee | Closing Fee | Funding Fee | Trade Time |")
+            md.append("|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|")
+            for t in recent_exchange_trades[:12]:
                 ts_str = t.get("timestamp", "")
                 if not ts_str and t.get("updated_time"):
                     try:
@@ -715,19 +744,32 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                     except Exception:
                         ts_str = ""
                 trade_type = t.get("trade_type", "Close Long" if t.get("side", "").lower() == "sell" else "Close Short")
+                is_close_long = "long" in trade_type.lower()
                 open_fee = float(t.get("open_fee", 0) or t.get("openFee", 0) or 0)
                 close_fee = float(t.get("close_fee", 0) or t.get("closeFee", 0) or 0)
                 pnl_val = float(t.get("closed_pnl", 0) or 0)
                 entry_px = float(t.get("entry_price", 0) or t.get("avgEntryPrice", 0) or 0)
                 exit_px = float(t.get("exit_price", 0) or t.get("avgExitPrice", 0) or 0)
-                q_val = float(t.get("qty", 0) or 0)
+                qty_val = float(t.get("qty", 0) or 0)
+                abs_q = abs(qty_val)
+                if abs_q == int(abs_q):
+                    q_num = str(int(abs_q))
+                else:
+                    q_num = f"{abs_q:.6f}".rstrip("0").rstrip(".")
+                qty_str = f"-{q_num}" if is_close_long else q_num
+
                 if t.get("funding_fee") is not None:
                     funding_fee = float(t.get("funding_fee"))
                 else:
-                    gross = (exit_px - entry_px) * q_val if t.get("side", "").lower() == "sell" else (entry_px - exit_px) * q_val
+                    gross = (exit_px - entry_px) * abs_q if is_close_long else (entry_px - exit_px) * abs_q
                     funding_fee = gross - open_fee - close_fee - pnl_val
-                fund_str = f"{funding_fee:+.4f}" if abs(funding_fee) >= 0.00005 else "0.0000"
-                md.append(f"| {ts_str} | **{t.get('symbol','')}** | `{trade_type}` | {q_val} | ${entry_px:,.2f} | ${exit_px:,.2f} | -${open_fee:.4f} | -${close_fee:.4f} | {fund_str} | **${pnl_val:+.4f}** |")
+                fund_str = f"{funding_fee:.4f}" if abs(funding_fee) >= 0.00005 else "0.0000"
+                res_badge = "**Win**" if pnl_val >= 0 else "*Loss*"
+                open_vol = entry_px * abs_q
+                close_vol = exit_px * abs_q
+                open_fee_str = format_bybit_fee(open_fee)
+                close_fee_str = format_bybit_fee(close_fee)
+                md.append(f"| **{t.get('symbol','')}** | {qty_str} | {entry_px:,.2f} | {exit_px:,.2f} | `{trade_type}` | **{pnl_val:+.4f}** | {res_badge} | {open_vol:,.2f} | {close_vol:,.2f} | {open_fee_str} | {close_fee_str} | {fund_str} | {ts_str} |")
             md.append("")
         elif not trades:
             md.append("*No closed trades recorded yet.*")
@@ -1167,14 +1209,15 @@ class TelemetryHandler(BaseHTTPRequestHandler):
               <td style="color:{cum_col}; font-weight:600; font-family:'JetBrains Mono';">${cum_val:+.2f}</td>
             </tr>""")
 
-        # Tab 2: Exchange trades from Bybit API (With Opening Fee, Closing Fee, and Funding Fee)
+        # Tab 2: Exchange trades from Bybit API (Exact Bybit Closed P&L Layout: 13 columns)
         exchange_trade_rows = []
         for t in recent_exchange_trades:
             pnl_val = float(t.get("closed_pnl", 0) or 0)
-            col = "#10b981" if pnl_val > 0 else ("#ef4444" if pnl_val < 0 else "#94a3b8")
+            pnl_col = "#10b981" if pnl_val >= 0 else "#ef4444"
             side_raw = t.get("side", "")
             trade_type = t.get("trade_type", "Close Long" if side_raw.lower() == "sell" else "Close Short")
-            type_badge = "long" if "long" in trade_type.lower() else "short"
+            is_close_long = "long" in trade_type.lower()
+            type_col = "#10b981" if is_close_long else "#ef4444"
 
             ts_display = t.get("timestamp", "")
             if not ts_display and t.get("updated_time"):
@@ -1188,32 +1231,50 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             entry_px = float(t.get("entry_price", 0) or t.get("avgEntryPrice", 0) or 0)
             exit_px = float(t.get("exit_price", 0) or t.get("avgExitPrice", 0) or 0)
             qty_val = float(t.get("qty", 0) or 0)
+            abs_q = abs(qty_val)
 
             if t.get("funding_fee") is not None:
                 funding_fee = float(t.get("funding_fee"))
             else:
-                gross = (exit_px - entry_px) * qty_val if side_raw.lower() == "sell" else (entry_px - exit_px) * qty_val
+                gross = (exit_px - entry_px) * abs_q if is_close_long else (entry_px - exit_px) * abs_q
                 funding_fee = gross - open_fee - close_fee - pnl_val
 
-            fund_col = "#34d399" if funding_fee > 0 else ("#f87171" if funding_fee < 0 else "#94a3b8")
-            fund_str = f"{funding_fee:+.4f}" if abs(funding_fee) >= 0.00005 else "0.0000"
-            qty_str = f"-{abs(qty_val)}" if "long" in trade_type.lower() else f"{abs(qty_val)}"
+            fund_col = "#94a3b8" if abs(funding_fee) < 0.00005 else ("#34d399" if funding_fee > 0 else "#f87171")
+            fund_str = f"{funding_fee:.4f}" if abs(funding_fee) >= 0.00005 else "0.0000"
+
+            if abs_q == int(abs_q):
+                q_num_str = str(int(abs_q))
+            else:
+                q_num_str = f"{abs_q:.6f}".rstrip("0").rstrip(".")
+            qty_str = f"-{q_num_str}" if is_close_long else q_num_str
+
+            open_vol = entry_px * abs_q
+            close_vol = exit_px * abs_q
+
+            open_fee_str = format_bybit_fee(open_fee)
+            close_fee_str = format_bybit_fee(close_fee)
+
+            result_badge = '<span class="badge-result win">Win</span>' if pnl_val >= 0 else '<span class="badge-result loss">Loss</span>'
+            sym_badge = render_coin_badge(t.get("symbol", ""))
 
             exchange_trade_rows.append(f"""<tr>
-              <td>{ts_display}</td>
-              <td><b>{t.get('symbol','')}</b></td>
-              <td><span class="badge {type_badge}">{trade_type}</span></td>
-              <td style="font-family:'JetBrains Mono';">{qty_str}</td>
-              <td style="font-family:'JetBrains Mono';">${entry_px:,.2f}</td>
-              <td style="font-family:'JetBrains Mono';">${exit_px:,.2f}</td>
-              <td style="font-family:'JetBrains Mono'; color:#f87171;">-${open_fee:.4f}</td>
-              <td style="font-family:'JetBrains Mono'; color:#f87171;">-${close_fee:.4f}</td>
+              <td>{sym_badge}</td>
+              <td style="font-family:'JetBrains Mono'; font-weight:600;">{qty_str}</td>
+              <td style="font-family:'JetBrains Mono';">{entry_px:,.2f}</td>
+              <td style="font-family:'JetBrains Mono';">{exit_px:,.2f}</td>
+              <td><span style="color:{type_col}; font-weight:600;">{trade_type}</span></td>
+              <td style="color:{pnl_col}; font-weight:700; font-family:'JetBrains Mono';">{pnl_val:+.4f}</td>
+              <td>{result_badge}</td>
+              <td style="font-family:'JetBrains Mono';">{open_vol:,.2f}</td>
+              <td style="font-family:'JetBrains Mono';">{close_vol:,.2f}</td>
+              <td style="font-family:'JetBrains Mono'; color:#cbd5e1;">{open_fee_str}</td>
+              <td style="font-family:'JetBrains Mono'; color:#cbd5e1;">{close_fee_str}</td>
               <td style="font-family:'JetBrains Mono'; color:{fund_col};">{fund_str}</td>
-              <td style="color:{col}; font-weight:700; font-family:'JetBrains Mono';">${pnl_val:+.4f}</td>
+              <td style="font-size:12px; color:#94a3b8; font-family:'JetBrains Mono';">{ts_display}</td>
             </tr>""")
 
         csv_trades_html = "\n".join(trade_rows) if trade_rows else '<tr><td colspan="11" style="text-align:center; padding:24px; color:#64748b;">No internal bot events recorded in bybit_trades.csv yet for the current session.<br><small style="color:#475569;">Switch to the <b>Bybit Exchange Closed P&amp;L</b> tab to see official Bybit closed position executions.</small></td></tr>'
-        exchange_trades_html = "\n".join(exchange_trade_rows) if exchange_trade_rows else '<tr><td colspan="10" style="text-align:center; padding:24px; color:#64748b;">No closed position fills retrieved from Bybit UTA API yet.</td></tr>'
+        exchange_trades_html = "\n".join(exchange_trade_rows) if exchange_trade_rows else '<tr><td colspan="13" style="text-align:center; padding:24px; color:#64748b;">No closed position fills retrieved from Bybit UTA API yet.</td></tr>'
 
         # Symbol breakdown badges
         badges = []
@@ -1649,6 +1710,25 @@ class TelemetryHandler(BaseHTTPRequestHandler):
     .badge.sl {{ background: rgba(239, 68, 68, 0.25); color: #ef4444; border: 1px solid #ef4444; }}
     .badge.ratchet {{ background: rgba(168, 85, 247, 0.18); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); }}
     .badge.flip {{ background: rgba(249, 115, 22, 0.2); color: #fb923c; border: 1px solid rgba(249, 115, 22, 0.35); }}
+    .badge-result {{
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      text-align: center;
+      letter-spacing: 0.2px;
+    }}
+    .badge-result.win {{
+      background: rgba(245, 158, 11, 0.15);
+      color: #fbbf24;
+      border: 1px solid rgba(245, 158, 11, 0.3);
+    }}
+    .badge-result.loss {{
+      background: rgba(148, 163, 184, 0.12);
+      color: #94a3b8;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+    }}
     .target-tag {{
       display: inline-flex;
       align-items: center;
@@ -1887,16 +1967,19 @@ class TelemetryHandler(BaseHTTPRequestHandler):
       <table>
         <thead>
           <tr>
-            <th>Timestamp</th>
             <th>Contracts</th>
-            <th>Trade Type</th>
             <th>Qty</th>
             <th>Entry Price</th>
             <th>Exit Price</th>
+            <th>Trade Type</th>
+            <th>Closed P&amp;L</th>
+            <th>Result</th>
+            <th>Open Trade Volume</th>
+            <th>Closed Trade Volume</th>
             <th>Opening Fee</th>
             <th>Closing Fee</th>
             <th>Funding Fee</th>
-            <th>Realized Net PnL</th>
+            <th>Trade Time</th>
           </tr>
         </thead>
         <tbody id="exchange-trades-body">

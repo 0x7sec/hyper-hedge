@@ -293,7 +293,10 @@ class BybitService:
                     total_pnl += pnl
                     by_sym[sym] = by_sym.get(sym, Decimal("0")) + pnl
 
+                    ts_ms = int(t.get("updatedTime", 0) or 0)
+                    ts_str = datetime.fromtimestamp(ts_ms / 1000).strftime("%Y-%m-%d %H:%M:%S") if ts_ms > 0 else ""
                     recent_formatted.append({
+                        "timestamp": ts_str,
                         "symbol": sym,
                         "side": t.get("side", ""),
                         "qty": float(t.get("qty", 0)),
@@ -301,7 +304,7 @@ class BybitService:
                         "exit_price": float(t.get("avgExitPrice", 0)),
                         "closed_pnl": float(pnl),
                         "exec_fee": float(t.get("execFee", 0)),
-                        "updated_time": int(t.get("updatedTime", 0)),
+                        "updated_time": ts_ms,
                     })
                 return {
                     "total_realized_pnl": total_pnl,

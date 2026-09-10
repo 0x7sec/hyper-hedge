@@ -314,16 +314,47 @@ def read_bot_state() -> dict:
     return {}
 
 
-def read_trade_history(limit: int = 50) -> list:
-    """Read trade audit log from bybit_trades.csv."""
+def read_trade_history(limit: int = 100) -> list:
+    """Read trade audit log from bybit_trades.csv, safely handling both 12-column and legacy schemas."""
     path = os.path.abspath(os.path.join(os.path.dirname(__file__), "bybit_trades.csv"))
     trades = []
     if os.path.exists(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    trades.append(row)
+                r = csv.reader(f)
+                for row in r:
+                    if not row or not row[0] or row[0].strip().lower() == "timestamp":
+                        continue
+                    if len(row) >= 12:
+                        trades.append({
+                            "timestamp": row[0].strip(),
+                            "symbol": row[1].strip(),
+                            "cycle": row[2].strip(),
+                            "leg": row[3].strip(),
+                            "event": row[4].strip(),
+                            "price": row[5].strip(),
+                            "size": row[6].strip(),
+                            "extreme_price": row[7].strip(),
+                            "trailing_sl": row[8].strip(),
+                            "tp_target": row[9].strip(),
+                            "leg_pnl_usd": row[10].strip(),
+                            "pair_cumulative_pnl": row[11].strip(),
+                        })
+                    elif len(row) >= 10:
+                        trades.append({
+                            "timestamp": row[0].strip(),
+                            "symbol": "BTCUSDT",
+                            "cycle": "1",
+                            "leg": row[1].strip(),
+                            "event": row[2].strip(),
+                            "price": row[3].strip(),
+                            "size": "",
+                            "extreme_price": row[4].strip(),
+                            "trailing_sl": row[5].strip(),
+                            "tp_target": row[6].strip(),
+                            "leg_pnl_usd": row[8].strip(),
+                            "pair_cumulative_pnl": row[9].strip(),
+                        })
             trades.reverse()  # Newest first
             return trades[:limit]
         except Exception:
@@ -561,46 +592,71 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                 long_leg = p.get("long_leg")
                 short_leg = p.get("short_leg")
                 if long_leg:
+                    l_sl = float(long_leg.get("trailing_sl", 0.0) or 0.0)
+                    l_tp = float(long_leg.get("tp_target", 0.0) or 0.0)
+                    l_sl_buf = (px - l_sl) if (px and l_sl) else 0.0
+                    l_tp_buf = (l_tp - px) if (px and l_tp) else 0.0
                     md.append(
                         f"  * **Long Leg**: {long_leg['size']} @ ${long_leg['entry_price']:.2f} | "
-                        f"SL: ${long_leg['trailing_sl']:.2f} | TP: ${long_leg['tp_target']:.2f} | "
+                        f"SL: ${l_sl:.2f} (-${abs(l_sl_buf):.2f}) | TP: ${l_tp:.2f} (+${abs(l_tp_buf):.2f}) | "
                         f"Unrealized PnL: ${long_leg['unrealized_pnl']:+.2f} ({long_leg['pnl_pct']:+.2f}%)"
                     )
                 if short_leg:
+                    s_sl = float(short_leg.get("trailing_sl", 0.0) or 0.0)
+                    s_tp = float(short_leg.get("tp_target", 0.0) or 0.0)
+                    s_sl_buf = (s_sl - px) if (px and s_sl) else 0.0
+                    s_tp_buf = (px - s_tp) if (px and s_tp) else 0.0
                     md.append(
                         f"  * **Short Leg**: {short_leg['size']} @ ${short_leg['entry_price']:.2f} | "
-                        f"SL: ${short_leg['trailing_sl']:.2f} | TP: ${short_leg['tp_target']:.2f} | "
+                        f"SL: ${s_sl:.2f} (+${abs(s_sl_buf):.2f}) | TP: ${s_tp:.2f} (-${abs(s_tp_buf):.2f}) | "
                         f"Unrealized PnL: ${short_leg['unrealized_pnl']:+.2f} ({short_leg['pnl_pct']:+.2f}%)"
                     )
                 if not long_leg and not short_leg:
                     md.append("  * *No active legs (Scanning for EMA cross + ADX gating)*")
                 md.append("")
 
-        md.append("## Recent Closed Trades (Exchange Ledger)")
-        if recent_exchange_trades:
-            md.append("| Timestamp | Symbol | Side | Qty | Entry Price | Exit Price | Net Realized PnL |")
-            md.append("|:---:|:---:|:---:|:---:|:---:|:---:|:---:|")
-            for t in recent_exchange_trades[:8]:
-                md.append(f"| {t.get('timestamp','')} | **{t.get('symbol','')}** | {t.get('side','')} | {t.get('qty','')} | ${t.get('entry_price',0):,.2f} | ${t.get('exit_price',0):,.2f} | **${t.get('closed_pnl',0):+.2f}** |")
-        elif trades:
-            md.append("| Timestamp | Symbol | Leg | Event | Price | Size | Net PnL |")
-            md.append("|---|---|:---:|:---:|:---:|:---:|:---:|")
+        if trades:
+            md.append("## Bot State Machine Audit (`bybit_trades.csv`)")
+            md.append("| Timestamp | Symbol | Leg | Event | Price | Size | Trailing SL | Apex TP | Leg PnL |")
+            md.append("|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|")
             for t in trades[:6]:
-                leg_val = t.get("leg") or t.get("leg_side", "")
-                evt_val = t.get("event") or t.get("event_type", "")
                 try:
-                    px_val = float(t.get("price") or t.get("fill_price", 0) or 0)
+                    px_val = float(t.get("price") or 0)
                 except (ValueError, TypeError):
                     px_val = 0.0
                 try:
-                    pnl_val = float(t.get("leg_pnl_usd") or t.get("pnl_usd", 0) or 0)
+                    sl_val = float(t.get("trailing_sl") or 0)
+                except (ValueError, TypeError):
+                    sl_val = 0.0
+                try:
+                    tp_val = float(t.get("tp_target") or 0)
+                except (ValueError, TypeError):
+                    tp_val = 0.0
+                try:
+                    pnl_val = float(t.get("leg_pnl_usd") or 0)
                 except (ValueError, TypeError):
                     pnl_val = 0.0
-                size_val = t.get("size", "")
-                md.append(f"| {t.get('timestamp','')} | {t.get('symbol','')} | {leg_val} | {evt_val} | ${px_val:.2f} | {size_val} | ${pnl_val:+.2f} |")
-        else:
+                sl_str = f"${sl_val:.2f}" if sl_val > 0 else "---"
+                tp_str = f"${tp_val:.2f}" if tp_val > 0 else "---"
+                md.append(f"| {t.get('timestamp','')} | **{t.get('symbol','')}** | {t.get('leg','')} | `{t.get('event','')}` | ${px_val:.2f} | {t.get('size','')} | {sl_str} | {tp_str} | **${pnl_val:+.2f}** |")
+            md.append("")
+
+        if recent_exchange_trades:
+            md.append("## Bybit Exchange Closed PnL Ledger (UTA V5)")
+            md.append("| Timestamp | Symbol | Side | Qty | Entry Price | Exit Price | Net Realized PnL |")
+            md.append("|:---:|:---:|:---:|:---:|:---:|:---:|:---:|")
+            for t in recent_exchange_trades[:8]:
+                ts_str = t.get("timestamp", "")
+                if not ts_str and t.get("updated_time"):
+                    try:
+                        ts_str = datetime.fromtimestamp(int(t.get("updated_time")) / 1000).strftime("%Y-%m-%d %H:%M:%S")
+                    except Exception:
+                        ts_str = ""
+                md.append(f"| {ts_str} | **{t.get('symbol','')}** | {t.get('side','')} | {t.get('qty','')} | ${t.get('entry_price',0):,.2f} | ${t.get('exit_price',0):,.2f} | **${t.get('closed_pnl',0):+.2f}** |")
+            md.append("")
+        elif not trades:
             md.append("*No closed trades recorded yet.*")
-        md.append("")
+            md.append("")
 
         md.append("## Recent System & Crash Logs (Last 15 Lines)")
         md.append("```text")
@@ -788,13 +844,16 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         opnl_color = "#10b981" if open_pnl >= 0 else "#ef4444"
         tpnl_color = "#10b981" if total_pnl >= 0 else "#ef4444"
 
-        # Markets rows
+        # Markets rows & Active Positions
         market_cards = []
+        active_positions_rows = []
         pairs = state.get("pairs", {})
         for sym, p in pairs.items():
             px = p.get("latest_price")
             px_str = f"${px:,.2f}" if px else "---"
+            px_val_str = f"${px:,.2f}" if px is not None else "---"
             p_status = p.get("status", "SCANNING")
+            p_phase = p.get("phase", "SCANNING")
             p_color = "#10b981" if p_status == "ACTIVE" else "#94a3b8"
             fast_e = p.get("fast_ema")
             slow_e = p.get("slow_ema")
@@ -804,23 +863,120 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             long_leg = p.get("long_leg")
             short_leg = p.get("short_leg")
 
-            long_html = '<div class="leg-box empty">Long: Idle</div>'
+            long_html = '<div class="leg-box empty">Long: Idle (Scanning)</div>'
             if long_leg:
-                lpnl = long_leg.get("unrealized_pnl", 0.0)
+                lpnl = float(long_leg.get("unrealized_pnl", 0.0) or 0.0)
                 lcol = "#10b981" if lpnl >= 0 else "#ef4444"
-                long_html = f"""<div class="leg-box long">
-                  <div class="leg-header"><span>LONG {long_leg['size']}</span> <b style="color:{lcol}">${lpnl:+.2f} ({long_leg['pnl_pct']:+.2f}%)</b></div>
-                  <div class="leg-body">Entry: ${long_leg['entry_price']:.2f} | SL: ${long_leg['trailing_sl']:.2f} | TP: ${long_leg['tp_target']:.2f}</div>
+                l_role = long_leg.get("role", "PRIMARY")
+                l_entry = float(long_leg.get("entry_price", 0.0) or 0.0)
+                l_sl = float(long_leg.get("trailing_sl", 0.0) or 0.0)
+                l_tp = float(long_leg.get("tp_target", 0.0) or 0.0)
+                l_size = float(long_leg.get("size", 0.0) or 0.0)
+                l_peak = float(long_leg.get("peak_price", l_entry) or l_entry)
+                l_pnl_pct = float(long_leg.get("pnl_pct", 0.0) or 0.0)
+
+                l_sl_buf = (px - l_sl) if (px and l_sl) else 0.0
+                l_sl_buf_pct = ((px - l_sl) / px * 100) if (px and l_sl and px > 0) else 0.0
+                l_tp_buf = (l_tp - px) if (px and l_tp) else 0.0
+                l_tp_buf_pct = ((l_tp - px) / px * 100) if (px and l_tp and px > 0) else 0.0
+
+                l_sl_tag = f'<span class="target-tag sl" title="Trailing Stop Loss">🛡️ SL: ${l_sl:,.2f} <span style="font-size:9px; opacity:0.85;">(-${abs(l_sl_buf):,.1f})</span></span>' if l_sl > 0 else '<span>SL: ---</span>'
+                l_tp_tag = f'<span class="target-tag tp" title="Apex Take Profit">🎯 TP: ${l_tp:,.2f} <span style="font-size:9px; opacity:0.85;">(+${abs(l_tp_buf):,.1f})</span></span>' if l_tp > 0 else '<span>TP: ---</span>'
+
+                long_html = f"""<div class="leg-box long" style="border-left: 3px solid #10b981;">
+                  <div class="leg-header">
+                    <div>
+                      <span class="badge long">LONG {l_size}</span>
+                      <span class="badge {'primary' if l_role=='PRIMARY' else 'counter'}" style="font-size:9px; padding:1px 5px;">{l_role}</span>
+                    </div>
+                    <b style="color:{lcol}">${lpnl:+.2f} ({l_pnl_pct:+.2f}%)</b>
+                  </div>
+                  <div class="leg-body">
+                    <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                      <span>Entry: <b>${l_entry:,.2f}</b></span>
+                      <span>Peak: <b>${l_peak:,.2f}</b></span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; gap:6px; margin-top:4px;">
+                      {l_sl_tag}
+                      {l_tp_tag}
+                    </div>
+                  </div>
                 </div>"""
 
-            short_html = '<div class="leg-box empty">Short: Idle</div>'
+                # Add to active positions table
+                px_val_str = f"${px:,.2f}" if px is not None else "---"
+                l_notional_str = f"(${l_size * px:,.1f})" if (px and l_size) else ""
+                table_sl = f'<span class="target-tag sl">🛡️ ${l_sl:,.2f}</span><div style="font-size:10px; color:#ef4444; margin-top:2px;">Buffer: ${abs(l_sl_buf):,.2f} ({abs(l_sl_buf_pct):.2f}%)</div>' if (l_sl > 0 and px) else (f'<span class="target-tag sl">🛡️ ${l_sl:,.2f}</span>' if l_sl > 0 else '---')
+                table_tp = f'<span class="target-tag tp">🎯 ${l_tp:,.2f}</span><div style="font-size:10px; color:#10b981; margin-top:2px;">Target: ${abs(l_tp_buf):,.2f} ({abs(l_tp_buf_pct):.2f}%)</div>' if (l_tp > 0 and px) else (f'<span class="target-tag tp">🎯 ${l_tp:,.2f}</span>' if l_tp > 0 else '---')
+
+                active_positions_rows.append(f"""<tr>
+                  <td><b>{sym}</b></td>
+                  <td><span class="badge long">🟢 LONG</span></td>
+                  <td><span class="badge {'primary' if l_role=='PRIMARY' else 'counter'}">{l_role}</span> <span class="badge event">{p_phase}</span></td>
+                  <td style="font-family:'JetBrains Mono';">{l_size} <span style="color:#64748b; font-size:11px;">{l_notional_str}</span></td>
+                  <td style="font-family:'JetBrains Mono';">${l_entry:,.2f}</td>
+                  <td style="font-family:'JetBrains Mono'; font-weight:700;">{px_val_str}</td>
+                  <td>{table_sl}</td>
+                  <td>{table_tp}</td>
+                  <td style="color:{lcol}; font-weight:700; font-family:'JetBrains Mono';">${lpnl:+.2f} <span style="font-size:11px;">({l_pnl_pct:+.2f}%)</span></td>
+                </tr>""")
+
+            short_html = '<div class="leg-box empty">Short: Idle (Scanning)</div>'
             if short_leg:
-                spnl = short_leg.get("unrealized_pnl", 0.0)
+                spnl = float(short_leg.get("unrealized_pnl", 0.0) or 0.0)
                 scol = "#10b981" if spnl >= 0 else "#ef4444"
-                short_html = f"""<div class="leg-box short">
-                  <div class="leg-header"><span>SHORT {short_leg['size']}</span> <b style="color:{scol}">${spnl:+.2f} ({short_leg['pnl_pct']:+.2f}%)</b></div>
-                  <div class="leg-body">Entry: ${short_leg['entry_price']:.2f} | SL: ${short_leg['trailing_sl']:.2f} | TP: ${short_leg['tp_target']:.2f}</div>
+                s_role = short_leg.get("role", "PRIMARY")
+                s_entry = float(short_leg.get("entry_price", 0.0) or 0.0)
+                s_sl = float(short_leg.get("trailing_sl", 0.0) or 0.0)
+                s_tp = float(short_leg.get("tp_target", 0.0) or 0.0)
+                s_size = float(short_leg.get("size", 0.0) or 0.0)
+                s_trough = float(short_leg.get("trough_price", s_entry) or s_entry)
+                s_pnl_pct = float(short_leg.get("pnl_pct", 0.0) or 0.0)
+
+                s_sl_buf = (s_sl - px) if (px and s_sl) else 0.0
+                s_sl_buf_pct = ((s_sl - px) / px * 100) if (px and s_sl and px > 0) else 0.0
+                s_tp_buf = (px - s_tp) if (px and s_tp) else 0.0
+                s_tp_buf_pct = ((px - s_tp) / px * 100) if (px and s_tp and px > 0) else 0.0
+
+                s_sl_tag = f'<span class="target-tag sl" title="Trailing Stop Loss">🛡️ SL: ${s_sl:,.2f} <span style="font-size:9px; opacity:0.85;">(+${abs(s_sl_buf):,.1f})</span></span>' if s_sl > 0 else '<span>SL: ---</span>'
+                s_tp_tag = f'<span class="target-tag tp" title="Apex Take Profit">🎯 TP: ${s_tp:,.2f} <span style="font-size:9px; opacity:0.85;">(-${abs(s_tp_buf):,.1f})</span></span>' if s_tp > 0 else '<span>TP: ---</span>'
+
+                short_html = f"""<div class="leg-box short" style="border-left: 3px solid #ef4444;">
+                  <div class="leg-header">
+                    <div>
+                      <span class="badge short">SHORT {s_size}</span>
+                      <span class="badge {'primary' if s_role=='PRIMARY' else 'counter'}" style="font-size:9px; padding:1px 5px;">{s_role}</span>
+                    </div>
+                    <b style="color:{scol}">${spnl:+.2f} ({s_pnl_pct:+.2f}%)</b>
+                  </div>
+                  <div class="leg-body">
+                    <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                      <span>Entry: <b>${s_entry:,.2f}</b></span>
+                      <span>Trough: <b>${s_trough:,.2f}</b></span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; gap:6px; margin-top:4px;">
+                      {s_sl_tag}
+                      {s_tp_tag}
+                    </div>
+                  </div>
                 </div>"""
+
+                # Add to active positions table
+                s_notional_str = f"(${s_size * px:,.1f})" if (px and s_size) else ""
+                table_sl = f'<span class="target-tag sl">🛡️ ${s_sl:,.2f}</span><div style="font-size:10px; color:#ef4444; margin-top:2px;">Buffer: ${abs(s_sl_buf):,.2f} ({abs(s_sl_buf_pct):.2f}%)</div>' if (s_sl > 0 and px) else (f'<span class="target-tag sl">🛡️ ${s_sl:,.2f}</span>' if s_sl > 0 else '---')
+                table_tp = f'<span class="target-tag tp">🎯 ${s_tp:,.2f}</span><div style="font-size:10px; color:#10b981; margin-top:2px;">Target: ${abs(s_tp_buf):,.2f} ({abs(s_tp_buf_pct):.2f}%)</div>' if (s_tp > 0 and px) else (f'<span class="target-tag tp">🎯 ${s_tp:,.2f}</span>' if s_tp > 0 else '---')
+
+                active_positions_rows.append(f"""<tr>
+                  <td><b>{sym}</b></td>
+                  <td><span class="badge short">🔴 SHORT</span></td>
+                  <td><span class="badge {'primary' if s_role=='PRIMARY' else 'counter'}">{s_role}</span> <span class="badge event">{p_phase}</span></td>
+                  <td style="font-family:'JetBrains Mono';">{s_size} <span style="color:#64748b; font-size:11px;">{s_notional_str}</span></td>
+                  <td style="font-family:'JetBrains Mono';">${s_entry:,.2f}</td>
+                  <td style="font-family:'JetBrains Mono'; font-weight:700;">{px_val_str}</td>
+                  <td>{table_sl}</td>
+                  <td>{table_tp}</td>
+                  <td style="color:{scol}; font-weight:700; font-family:'JetBrains Mono';">${spnl:+.2f} <span style="font-size:11px;">({s_pnl_pct:+.2f}%)</span></td>
+                </tr>""")
 
             market_cards.append(f"""
             <div class="card market-card" data-symbol="{sym}">
@@ -870,49 +1026,129 @@ class TelemetryHandler(BaseHTTPRequestHandler):
 
         markets_html = "\n".join(market_cards) if market_cards else '<div class="card" style="text-align:center; color:#64748b;">Engine initializing markets...</div>'
 
-        # Trade rows from CSV
+        if active_positions_rows:
+            active_positions_html = f"""
+            <div class="table-container" style="margin-bottom:24px;">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Market</th>
+                    <th>Position Leg</th>
+                    <th>Role &amp; State</th>
+                    <th>Size / Notional</th>
+                    <th>Entry Price</th>
+                    <th>Mark Price</th>
+                    <th>Trailing Stop Loss (SL)</th>
+                    <th>Apex Take Profit (TP)</th>
+                    <th>Unrealized PnL</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {"".join(active_positions_rows)}
+                </tbody>
+              </table>
+            </div>"""
+        else:
+            active_positions_html = """
+            <div class="card" style="padding:16px 20px; text-align:center; color:#94a3b8; background:#0a101d; border:1px dashed #1e293b; margin-bottom:24px;">
+              <div style="font-size:18px; margin-bottom:4px;">🛡️</div>
+              <div style="font-weight:600; color:#f1f5f9; margin-bottom:4px;">No Open Positions Currently Active</div>
+              <div style="font-size:12px; color:#64748b;">The multi-pair state machine is scanning 1h candles on BTCUSDT, ETHUSDT, SOLUSDT, and XAUUSDT for EMA(9/21) crosses with ADX gating. When a dual-leg entry triggers, active SL and TP protection levels will update here in real time.</div>
+            </div>"""
+
+        # Tab 1: Trade rows from CSV
         trade_rows = []
         for t in trades:
-            leg_val = t.get("leg") or t.get("leg_side", "")
-            evt_val = t.get("event") or t.get("event_type", "")
+            leg_val = (t.get("leg") or t.get("leg_side") or "").upper()
+            evt_val = t.get("event") or t.get("event_type") or ""
             try:
                 px_val = float(t.get("price") or t.get("fill_price", 0) or 0)
             except (ValueError, TypeError):
                 px_val = 0.0
             try:
+                sl_val = float(t.get("trailing_sl", 0) or 0)
+            except (ValueError, TypeError):
+                sl_val = 0.0
+            try:
+                tp_val = float(t.get("tp_target", 0) or 0)
+            except (ValueError, TypeError):
+                tp_val = 0.0
+            try:
                 pnl_val = float(t.get("leg_pnl_usd") or t.get("pnl_usd", 0) or 0)
             except (ValueError, TypeError):
                 pnl_val = 0.0
+            try:
+                cum_val = float(t.get("pair_cumulative_pnl", 0) or 0)
+            except (ValueError, TypeError):
+                cum_val = 0.0
             size_val = t.get("size", "")
-            col = "#10b981" if pnl_val > 0 else ("#ef4444" if pnl_val < 0 else "#94a3b8")
+            cycle_val = t.get("cycle", "1")
+
+            pnl_col = "#10b981" if pnl_val > 0 else ("#ef4444" if pnl_val < 0 else "#94a3b8")
+            cum_col = "#10b981" if cum_val >= 0 else "#ef4444"
+            leg_badge = "long" if "LONG" in leg_val or "BUY" in leg_val else ("short" if "SHORT" in leg_val or "SELL" in leg_val else "event")
+
+            # Style event badge
+            evt_class = "event"
+            if "TP" in evt_val:
+                evt_class = "tp"
+            elif "SL" in evt_val or "COLLAPSE" in evt_val:
+                evt_class = "sl"
+            elif "RATCHET" in evt_val:
+                evt_class = "ratchet"
+            elif "FLIP" in evt_val or "SIZE" in evt_val:
+                evt_class = "flip"
+            elif "ENTRY" in evt_val:
+                evt_class = "primary"
+
+            sl_str = f"${sl_val:,.2f}" if sl_val > 0 else "---"
+            tp_str = f"${tp_val:,.2f}" if tp_val > 0 else "---"
+
             trade_rows.append(f"""<tr>
               <td>{t.get('timestamp','')}</td>
               <td><b>{t.get('symbol','')}</b></td>
-              <td><span class="badge {leg_val.lower()}">{leg_val}</span></td>
-              <td>{evt_val}</td>
-              <td>${px_val:.2f}</td>
-              <td>{size_val}</td>
-              <td style="color:{col}; font-weight:600;">${pnl_val:+.2f}</td>
+              <td style="text-align:center;"><span style="font-family:'JetBrains Mono'; font-size:11px; color:#94a3b8;">#{cycle_val}</span></td>
+              <td><span class="badge {leg_badge}">{leg_val}</span></td>
+              <td><span class="badge {evt_class}">{evt_val}</span></td>
+              <td style="font-family:'JetBrains Mono';">${px_val:,.2f}</td>
+              <td style="font-family:'JetBrains Mono';">{size_val}</td>
+              <td style="font-family:'JetBrains Mono'; color:#f87171;">{sl_str}</td>
+              <td style="font-family:'JetBrains Mono'; color:#34d399;">{tp_str}</td>
+              <td style="color:{pnl_col}; font-weight:700; font-family:'JetBrains Mono';">${pnl_val:+.2f}</td>
+              <td style="color:{cum_col}; font-weight:600; font-family:'JetBrains Mono';">${cum_val:+.2f}</td>
             </tr>""")
 
-        # Fallback to Exchange trades if CSV is empty
+        # Tab 2: Exchange trades from Bybit API
         exchange_trade_rows = []
         for t in recent_exchange_trades:
             pnl_val = float(t.get("closed_pnl", 0) or 0)
             col = "#10b981" if pnl_val > 0 else ("#ef4444" if pnl_val < 0 else "#94a3b8")
-            side_badge = "long" if t.get("side", "").lower() in ["buy", "long"] else "short"
+            side_raw = t.get("side", "")
+            side_badge = "long" if side_raw.lower() in ["buy", "long"] else "short"
+
+            ts_display = t.get("timestamp", "")
+            if not ts_display and t.get("updated_time"):
+                try:
+                    ts_display = datetime.fromtimestamp(int(t.get("updated_time")) / 1000).strftime("%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    ts_display = ""
+
+            fee_val = float(t.get("exec_fee", 0) or 0)
+
             exchange_trade_rows.append(f"""<tr>
-              <td>{t.get('timestamp','')}</td>
+              <td>{ts_display}</td>
               <td><b>{t.get('symbol','')}</b></td>
-              <td><span class="badge {side_badge}">{t.get('side','')}</span></td>
-              <td>Closed PnL</td>
-              <td>${t.get('exit_price',0):,.2f}</td>
-              <td>{t.get('qty','')}</td>
-              <td style="color:{col}; font-weight:600;">${pnl_val:+.2f}</td>
+              <td><span class="badge {side_badge}">{side_raw}</span></td>
+              <td><span class="badge event">Closed PnL</span></td>
+              <td style="font-family:'JetBrains Mono';">{t.get('qty','')}</td>
+              <td style="font-family:'JetBrains Mono';">${t.get('entry_price', 0):,.2f}</td>
+              <td style="font-family:'JetBrains Mono';">${t.get('exit_price', 0):,.2f}</td>
+              <td style="font-family:'JetBrains Mono'; color:#f87171;">-${abs(fee_val):.4f}</td>
+              <td style="color:{col}; font-weight:700; font-family:'JetBrains Mono';">${pnl_val:+.2f}</td>
             </tr>""")
 
-        display_trade_rows = trade_rows if trade_rows else exchange_trade_rows
-        trades_html = "\n".join(display_trade_rows) if display_trade_rows else '<tr><td colspan="7" style="text-align:center; color:#64748b;">No trades executed yet</td></tr>'
+        csv_trades_html = "\n".join(trade_rows) if trade_rows else '<tr><td colspan="11" style="text-align:center; padding:24px; color:#64748b;">No internal bot events recorded in bybit_trades.csv yet for the current session.<br><small style="color:#475569;">Switch to the <b>Bybit Exchange Closed P&amp;L</b> tab to see official Bybit closed position executions.</small></td></tr>'
+        exchange_trades_html = "\n".join(exchange_trade_rows) if exchange_trade_rows else '<tr><td colspan="9" style="text-align:center; padding:24px; color:#64748b;">No closed position fills retrieved from Bybit UTA API yet.</td></tr>'
 
         # Symbol breakdown badges
         badges = []
@@ -1323,6 +1559,75 @@ class TelemetryHandler(BaseHTTPRequestHandler):
     }}
     .badge.buy {{ background: rgba(16, 185, 129, 0.18); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }}
     .badge.sell {{ background: rgba(239, 68, 68, 0.18); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }}
+    .badge.long {{ background: rgba(16, 185, 129, 0.18); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }}
+    .badge.short {{ background: rgba(239, 68, 68, 0.18); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }}
+    .badge.primary {{ background: rgba(56, 189, 248, 0.18); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); }}
+    .badge.counter {{ background: rgba(245, 158, 11, 0.18); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }}
+    .badge.event {{ background: rgba(148, 163, 184, 0.12); color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.2); font-weight: 600; }}
+    .badge.tp {{ background: rgba(16, 185, 129, 0.25); color: #10b981; border: 1px solid #10b981; }}
+    .badge.sl {{ background: rgba(239, 68, 68, 0.25); color: #ef4444; border: 1px solid #ef4444; }}
+    .badge.ratchet {{ background: rgba(168, 85, 247, 0.18); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); }}
+    .badge.flip {{ background: rgba(249, 115, 22, 0.2); color: #fb923c; border: 1px solid rgba(249, 115, 22, 0.35); }}
+    .target-tag {{
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 4px;
+    }}
+    .target-tag.sl {{
+      background: rgba(239, 68, 68, 0.12);
+      color: #f87171;
+      border: 1px solid rgba(239, 68, 68, 0.25);
+    }}
+    .target-tag.tp {{
+      background: rgba(16, 185, 129, 0.12);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.25);
+    }}
+    .trade-tabs {{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+      border-bottom: 1px solid #1e293b;
+      padding-bottom: 8px;
+      flex-wrap: wrap;
+    }}
+    .trade-tab-btn {{
+      background: #0d1526;
+      border: 1px solid #1e293b;
+      color: #94a3b8;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }}
+    .trade-tab-btn:hover {{
+      color: #f1f5f9;
+      background: rgba(255, 255, 255, 0.05);
+    }}
+    .trade-tab-btn.active {{
+      background: #1e293b;
+      border-color: #38bdf8;
+      color: #38bdf8;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    }}
+    .tab-count {{
+      font-size: 11px;
+      background: rgba(255, 255, 255, 0.1);
+      padding: 1px 7px;
+      border-radius: 999px;
+      font-family: 'JetBrains Mono', monospace;
+    }}
     .terminal {{
       background: #04060a;
       border: 1px solid #1e293b;
@@ -1474,27 +1779,72 @@ class TelemetryHandler(BaseHTTPRequestHandler):
     </div>
 
     <div class="section-title">
-      <span>Recent Trade Execution Audit</span>
-      <div style="display:flex; align-items:center; gap:8px;">
-        <span style="font-size:12px; color:#64748b;">(bybit_trades.csv)</span>
-        <a href="/api/clear-trades?redirect=1" class="btn" style="font-size:11px; padding:3px 8px; border-color:#475569;" onclick="return confirm('Clear trade history audit records?');">🧹 Clear History</a>
+      <span>Active Live Positions & Order Protection</span>
+      <span style="font-size:12px; color:#64748b;">Live Trailing SL & Apex TP Targets</span>
+    </div>
+    {active_positions_html}
+
+    <div class="section-title">
+      <span>Trade Execution & Audit Ledgers</span>
+      <span style="font-size:12px; color:#64748b;">Bot State Machine vs. Bybit Exchange Fills</span>
+    </div>
+
+    <div class="trade-tabs">
+      <button id="trade-tab-csv" class="trade-tab-btn active" onclick="switchTradeTab('csv')">
+        📜 Bot State Machine Audit <code>(bybit_trades.csv)</code>
+        <span class="tab-count">{len(trade_rows)}</span>
+      </button>
+      <button id="trade-tab-exchange" class="trade-tab-btn" onclick="switchTradeTab('exchange')">
+        🏛️ Bybit Exchange Closed P&amp;L Ledger <code>(UTA V5)</code>
+        <span class="tab-count">{len(exchange_trade_rows)}</span>
+      </button>
+      <div style="margin-left:auto; display:flex; align-items:center; gap:8px;">
+        <a href="/api/clear-trades?redirect=1" class="btn" style="font-size:11px; padding:4px 10px; border-color:#475569;" onclick="return confirm('Clear local bybit_trades.csv audit ledger? (Does not affect exchange fills)');" title="Clear local CSV history only">🧹 Clear CSV History</a>
       </div>
     </div>
-    <div class="table-container">
+
+    <!-- Tab 1: bybit_trades.csv -->
+    <div id="trade-table-csv" class="table-container">
       <table>
         <thead>
           <tr>
             <th>Timestamp</th>
             <th>Symbol</th>
+            <th>Cycle</th>
             <th>Leg</th>
-            <th>Event</th>
+            <th>State Event</th>
             <th>Fill Price</th>
             <th>Size</th>
-            <th>Net PnL</th>
+            <th>Trailing SL</th>
+            <th>Apex TP</th>
+            <th>Leg PnL</th>
+            <th>Cumul PnL</th>
           </tr>
         </thead>
         <tbody>
-          {trades_html}
+          {csv_trades_html}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Tab 2: Bybit Exchange Closed PnL -->
+    <div id="trade-table-exchange" class="table-container" style="display:none;">
+      <table>
+        <thead>
+          <tr>
+            <th>Timestamp</th>
+            <th>Symbol</th>
+            <th>Side</th>
+            <th>Exec Type</th>
+            <th>Qty</th>
+            <th>Avg Entry Price</th>
+            <th>Avg Exit Price</th>
+            <th>Taker Fee</th>
+            <th>Realized Net PnL</th>
+          </tr>
+        </thead>
+        <tbody>
+          {exchange_trades_html}
         </tbody>
       </table>
     </div>
@@ -1887,6 +2237,33 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         loadChart(sym, activeTfs[sym]);
       }});
     }}, 15000);
+
+    function switchTradeTab(tab) {{
+      const csvBtn = document.getElementById('trade-tab-csv');
+      const exchBtn = document.getElementById('trade-tab-exchange');
+      const csvTable = document.getElementById('trade-table-csv');
+      const exchTable = document.getElementById('trade-table-exchange');
+      if (!csvBtn || !exchBtn || !csvTable || !exchTable) return;
+
+      if (tab === 'exchange') {{
+        csvBtn.classList.remove('active');
+        exchBtn.classList.add('active');
+        csvTable.style.display = 'none';
+        exchTable.style.display = 'block';
+      }} else {{
+        exchBtn.classList.remove('active');
+        csvBtn.classList.add('active');
+        exchTable.style.display = 'none';
+        csvTable.style.display = 'block';
+      }}
+      localStorage.setItem('active_trade_tab', tab);
+    }}
+
+    // Auto-restore trade tab preference or auto-switch to exchange if CSV is empty
+    const savedTradeTab = localStorage.getItem('active_trade_tab');
+    if (savedTradeTab === 'exchange' || (!{1 if trade_rows else 0} && {1 if exchange_trade_rows else 0})) {{
+      switchTradeTab('exchange');
+    }}
 
     // Auto-refresh full page every 30 seconds
     setTimeout(() => {{ location.reload(); }}, 30000);

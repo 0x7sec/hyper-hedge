@@ -881,6 +881,8 @@ class BybitTradingEngine:
                 elif price <= entry_px * (Decimal("1") - pair.cfg.confirm_mult * d_val):
                     pair.phase = "RUNNER_B2"
                     confirm_px = price
+                    tp_level = entry_px * (Decimal("1") - pair.cfg.b2_tp_mult * d_val)
+
                     # 1. Collapse Trapped 100% Primary Long Leg
                     if pair.long_leg and pair.long_leg.status == "ACTIVE":
                         self.service.close_position(1, pair.long_leg.size, symbol=sym)
@@ -888,7 +890,22 @@ class BybitTradingEngine:
                         pair.long_leg.exit_price = confirm_px
                         self._csv_event(pair, pair.long_leg, "B2_COLLAPSE_PRIMARY", confirm_px)
 
-                    # 2. Size-Flip: Add +70% to Counter Short Leg to make 100% Runner
+                    # EXHAUSTION GUARD: If price already plunged to or below the B2 TP target in a flash event,
+                    # do NOT size-flip by selling the bottom wick! Harvest profit on existing 30% short and end cycle.
+                    if price <= tp_level:
+                        if pair.short_leg and pair.short_leg.status == "ACTIVE":
+                            self.service.close_position(2, pair.short_leg.size, symbol=sym)
+                            pair.short_leg.status = "CLOSED_TP"
+                            pair.short_leg.exit_price = price
+                            self._csv_event(pair, pair.short_leg, "TP_HIT_EXHAUSTION", price)
+                        console.print(
+                            f"\n[bold green]>>> [{sym}] FLASH DUMP DETECTED @ {price:.2f} (<= B2 TP {tp_level:.2f})! "
+                            f"Harvested 30% Short profit without size-flipping into bottom wick. <<<[/bold green]"
+                        )
+                        self._close_pair_cycle(pair)
+                        return
+
+                    # 2. Normal Scenario 5 Size-Flip: Add +70% to Counter Short Leg to make 100% Runner
                     prev_short_size = pair.short_leg.size if pair.short_leg else c_qty
                     add_qty = base_qty - prev_short_size
                     add_fill = self.service.place_market_open("Sell", add_qty, position_idx=2, symbol=sym)
@@ -907,23 +924,7 @@ class BybitTradingEngine:
                     blend_px = pair.short_leg.entry_price if pair.short_leg else confirm_px
                     total_drain = abs(trapped_loss) + trapped_fees + upsize_fees + (base_qty * blend_px * fee_rate * Decimal("2"))
                     true_be = blend_px - (total_drain / base_qty)
-                    tp_level = entry_px * (Decimal("1") - pair.cfg.b2_tp_mult * d_val)
                     curr_sl = entry_px  # Initial SL placed at initial entry P0
-
-                    # EXHAUSTION GUARD: If price already plunged to or below the B2 TP target,
-                    # do NOT size-flip by selling the bottom wick! Harvest profit on existing 30% short and end cycle.
-                    if price <= tp_level:
-                        if pair.short_leg and pair.short_leg.status == "ACTIVE":
-                            self.service.close_position(2, pair.short_leg.size, symbol=sym)
-                            pair.short_leg.status = "CLOSED_TP"
-                            pair.short_leg.exit_price = price
-                            self._csv_event(pair, pair.short_leg, "TP_HIT_EXHAUSTION", price)
-                        console.print(
-                            f"\n[bold green]>>> [{sym}] BRANCH 2 HIT & EXHAUSTION TP REACHED @ {price:.2f} (<= {tp_level:.2f})! "
-                            f"Harvested Short profit without size-flipping into bottom wick. <<<[/bold green]"
-                        )
-                        self._close_pair_cycle(pair)
-                        return
 
                     if pair.short_leg and pair.short_leg.status == "ACTIVE":
                         pair.short_leg.trailing_sl = curr_sl
@@ -982,6 +983,8 @@ class BybitTradingEngine:
                 elif price >= entry_px * (Decimal("1") + pair.cfg.confirm_mult * d_val):
                     pair.phase = "RUNNER_B2"
                     confirm_px = price
+                    tp_level = entry_px * (Decimal("1") + pair.cfg.b2_tp_mult * d_val)
+
                     # 1. Collapse Trapped 100% Primary Short Leg
                     if pair.short_leg and pair.short_leg.status == "ACTIVE":
                         self.service.close_position(2, pair.short_leg.size, symbol=sym)
@@ -989,7 +992,22 @@ class BybitTradingEngine:
                         pair.short_leg.exit_price = confirm_px
                         self._csv_event(pair, pair.short_leg, "B2_COLLAPSE_PRIMARY", confirm_px)
 
-                    # 2. Size-Flip: Add +70% to Counter Long Leg to make 100% Runner
+                    # EXHAUSTION GUARD: If price already pumped to or above the B2 TP target in a flash event,
+                    # do NOT size-flip by buying the top wick! Harvest profit on existing 30% long and end cycle.
+                    if price >= tp_level:
+                        if pair.long_leg and pair.long_leg.status == "ACTIVE":
+                            self.service.close_position(1, pair.long_leg.size, symbol=sym)
+                            pair.long_leg.status = "CLOSED_TP"
+                            pair.long_leg.exit_price = price
+                            self._csv_event(pair, pair.long_leg, "TP_HIT_EXHAUSTION", price)
+                        console.print(
+                            f"\n[bold green]>>> [{sym}] FLASH PUMP DETECTED @ {price:.2f} (>= B2 TP {tp_level:.2f})! "
+                            f"Harvested 30% Long profit without size-flipping into top wick. <<<[/bold green]"
+                        )
+                        self._close_pair_cycle(pair)
+                        return
+
+                    # 2. Normal Scenario 5 Size-Flip: Add +70% to Counter Long Leg to make 100% Runner
                     prev_long_size = pair.long_leg.size if pair.long_leg else c_qty
                     add_qty = base_qty - prev_long_size
                     add_fill = self.service.place_market_open("Buy", add_qty, position_idx=1, symbol=sym)
@@ -1008,23 +1026,7 @@ class BybitTradingEngine:
                     blend_px = pair.long_leg.entry_price if pair.long_leg else confirm_px
                     total_drain = abs(trapped_loss) + trapped_fees + upsize_fees + (base_qty * blend_px * fee_rate * Decimal("2"))
                     true_be = blend_px + (total_drain / base_qty)
-                    tp_level = entry_px * (Decimal("1") + pair.cfg.b2_tp_mult * d_val)
                     curr_sl = entry_px  # Initial SL placed at initial entry P0
-
-                    # EXHAUSTION GUARD: If price already pumped to or above the B2 TP target,
-                    # do NOT size-flip by buying the top wick! Harvest profit on existing 30% long and end cycle.
-                    if price >= tp_level:
-                        if pair.long_leg and pair.long_leg.status == "ACTIVE":
-                            self.service.close_position(1, pair.long_leg.size, symbol=sym)
-                            pair.long_leg.status = "CLOSED_TP"
-                            pair.long_leg.exit_price = price
-                            self._csv_event(pair, pair.long_leg, "TP_HIT_EXHAUSTION", price)
-                        console.print(
-                            f"\n[bold green]>>> [{sym}] BRANCH 2 HIT & EXHAUSTION TP REACHED @ {price:.2f} (>= {tp_level:.2f})! "
-                            f"Harvested Long profit without size-flipping into top wick. <<<[/bold green]"
-                        )
-                        self._close_pair_cycle(pair)
-                        return
 
                     if pair.long_leg and pair.long_leg.status == "ACTIVE":
                         pair.long_leg.trailing_sl = curr_sl

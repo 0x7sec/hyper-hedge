@@ -370,7 +370,7 @@ def read_bot_state() -> dict:
     return {}
 
 
-def read_trade_history(limit: int = 100) -> list:
+def read_trade_history(limit: int = 1000) -> list:
     """Read trade audit log from bybit_trades.csv, safely handling both 12-column and legacy schemas."""
     path = os.path.abspath(os.path.join(os.path.dirname(__file__), "bybit_trades.csv"))
     trades = []
@@ -896,7 +896,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         state = read_bot_state()
         svc = get_service_status()
         acc = fetch_bybit_account_and_trades()
-        trades = read_trade_history(limit=50)
+        trades = read_trade_history(limit=1000)
         logs = get_systemd_logs(lines=80)
         tickers_24h = fetch_24h_tickers()
 
@@ -1666,12 +1666,16 @@ class TelemetryHandler(BaseHTTPRequestHandler):
     }}
     .table-container {{
       width: 100%;
-      overflow-x: auto;
-      -webkit-overflow-scrolling: touch;
       border-radius: 12px;
       border: 1px solid #1e293b;
       background: #0f172a;
       margin-bottom: 24px;
+      overflow: hidden;
+    }}
+    .table-scroll {{
+      width: 100%;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
     }}
     table {{
       width: 100%;
@@ -1788,6 +1792,132 @@ class TelemetryHandler(BaseHTTPRequestHandler):
       padding: 1px 7px;
       border-radius: 999px;
       font-family: 'JetBrains Mono', monospace;
+    }}
+    .pagination-bar {{
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 18px;
+      background: #090e1a;
+      border-top: 1px solid #1e293b;
+      flex-wrap: wrap;
+      gap: 12px;
+    }}
+    .pagination-info {{
+      font-size: 12px;
+      color: #94a3b8;
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 500;
+      white-space: nowrap;
+    }}
+    .pagination-actions {{
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }}
+    .btn-page {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 5px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid #334155;
+      background: #1e293b;
+      color: #e2e8f0;
+      transition: all 0.15s ease;
+      user-select: none;
+    }}
+    .btn-page:hover:not(:disabled) {{
+      background: #334155;
+      color: #fff;
+      border-color: #475569;
+    }}
+    .btn-page:disabled {{
+      opacity: 0.35;
+      cursor: not-allowed;
+      border-color: #1e293b;
+    }}
+    .page-pills {{
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }}
+    .page-pill {{
+      min-width: 28px;
+      height: 28px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 6px;
+      border-radius: 6px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      background: #131d31;
+      border: 1px solid #1e293b;
+      color: #94a3b8;
+      transition: all 0.15s ease;
+      user-select: none;
+    }}
+    .page-pill:hover:not(.active) {{
+      background: #1e293b;
+      color: #fff;
+      border-color: #334155;
+    }}
+    .page-pill.active {{
+      background: #0284c7;
+      border-color: #38bdf8;
+      color: #ffffff;
+      font-weight: 700;
+      box-shadow: 0 0 8px rgba(56, 189, 248, 0.4);
+    }}
+    .btn-show-more {{
+      display: inline-flex;
+      align-items: center;
+      padding: 5px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      background: rgba(56, 189, 248, 0.1);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      color: #38bdf8;
+      transition: all 0.15s ease;
+      user-select: none;
+      margin-left: 4px;
+    }}
+    .btn-show-more:hover {{
+      background: rgba(56, 189, 248, 0.2);
+      color: #7dd3fc;
+      border-color: #38bdf8;
+    }}
+    .pagination-size {{
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: #94a3b8;
+    }}
+    .pagination-size select {{
+      background: #090e1a;
+      border: 1px solid #334155;
+      color: #f1f5f9;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 4px 8px;
+      border-radius: 6px;
+      outline: none;
+      cursor: pointer;
+      transition: border-color 0.15s ease;
+    }}
+    .pagination-size select:focus {{
+      border-color: #38bdf8;
     }}
     .terminal {{
       background: #04060a;
@@ -1940,52 +2070,92 @@ class TelemetryHandler(BaseHTTPRequestHandler):
 
     <!-- Tab 1: bybit_trades.csv -->
     <div id="trade-table-csv" class="table-container">
-      <table>
-        <thead>
-          <tr>
-            <th>Timestamp</th>
-            <th>Symbol</th>
-            <th>Cycle</th>
-            <th>Leg</th>
-            <th>State Event</th>
-            <th>Fill Price</th>
-            <th>Size</th>
-            <th>Trailing SL</th>
-            <th>Apex TP</th>
-            <th>Leg PnL</th>
-            <th>Cumul PnL</th>
-          </tr>
-        </thead>
-        <tbody id="csv-trades-body">
-          {d['csv_trades_html']}
-        </tbody>
-      </table>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Timestamp</th>
+              <th>Symbol</th>
+              <th>Cycle</th>
+              <th>Leg</th>
+              <th>State Event</th>
+              <th>Fill Price</th>
+              <th>Size</th>
+              <th>Trailing SL</th>
+              <th>Apex TP</th>
+              <th>Leg PnL</th>
+              <th>Cumul PnL</th>
+            </tr>
+          </thead>
+          <tbody id="csv-trades-body">
+            {d['csv_trades_html']}
+          </tbody>
+        </table>
+      </div>
+      <div class="pagination-bar" id="csv-pagination">
+        <div class="pagination-info" id="csv-page-info">Showing 1–50 of {d['csv_count']} trades</div>
+        <div class="pagination-actions">
+          <button type="button" class="btn-page" id="csv-prev-btn" onclick="changePage('csv', -1)" disabled title="Previous Page">◀ Prev</button>
+          <div class="page-pills" id="csv-page-pills"></div>
+          <button type="button" class="btn-page" id="csv-next-btn" onclick="changePage('csv', 1)" title="Next Page">Next ▶</button>
+          <button type="button" class="btn-show-more" id="csv-more-btn" onclick="showMoreRows('csv')">⬇ Show More (+50)</button>
+        </div>
+        <div class="pagination-size">
+          <label for="csv-page-size">Per page:</label>
+          <select id="csv-page-size" onchange="changePageSize('csv', this.value)">
+            <option value="25">25</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="all">All</option>
+          </select>
+        </div>
+      </div>
     </div>
 
     <!-- Tab 2: Bybit Exchange Closed PnL -->
     <div id="trade-table-exchange" class="table-container" style="display:none;">
-      <table>
-        <thead>
-          <tr>
-            <th>Contracts</th>
-            <th>Qty</th>
-            <th>Entry Price</th>
-            <th>Exit Price</th>
-            <th>Trade Type</th>
-            <th>Closed P&amp;L</th>
-            <th>Result</th>
-            <th>Open Trade Volume</th>
-            <th>Closed Trade Volume</th>
-            <th>Opening Fee</th>
-            <th>Closing Fee</th>
-            <th>Funding Fee</th>
-            <th>Trade Time</th>
-          </tr>
-        </thead>
-        <tbody id="exchange-trades-body">
-          {d['exchange_trades_html']}
-        </tbody>
-      </table>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Contracts</th>
+              <th>Qty</th>
+              <th>Entry Price</th>
+              <th>Exit Price</th>
+              <th>Trade Type</th>
+              <th>Closed P&amp;L</th>
+              <th>Result</th>
+              <th>Open Trade Volume</th>
+              <th>Closed Trade Volume</th>
+              <th>Opening Fee</th>
+              <th>Closing Fee</th>
+              <th>Funding Fee</th>
+              <th>Trade Time</th>
+            </tr>
+          </thead>
+          <tbody id="exchange-trades-body">
+            {d['exchange_trades_html']}
+          </tbody>
+        </table>
+      </div>
+      <div class="pagination-bar" id="exchange-pagination">
+        <div class="pagination-info" id="exchange-page-info">Showing 1–50 of {d['exchange_count']} trades</div>
+        <div class="pagination-actions">
+          <button type="button" class="btn-page" id="exchange-prev-btn" onclick="changePage('exchange', -1)" disabled title="Previous Page">◀ Prev</button>
+          <div class="page-pills" id="exchange-page-pills"></div>
+          <button type="button" class="btn-page" id="exchange-next-btn" onclick="changePage('exchange', 1)" title="Next Page">Next ▶</button>
+          <button type="button" class="btn-show-more" id="exchange-more-btn" onclick="showMoreRows('exchange')">⬇ Show More (+50)</button>
+        </div>
+        <div class="pagination-size">
+          <label for="exchange-page-size">Per page:</label>
+          <select id="exchange-page-size" onchange="changePageSize('exchange', this.value)">
+            <option value="25">25</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="all">All</option>
+          </select>
+        </div>
+      </div>
     </div>
 
     <div class="section-title">
@@ -2051,6 +2221,145 @@ class TelemetryHandler(BaseHTTPRequestHandler):
       }}, 3000);
     }}
 
+    // Client-side pagination state (default 50 trades per page)
+    const paginationState = {{
+      csv: {{ page: 1, pageSize: 50, allRows: [] }},
+      exchange: {{ page: 1, pageSize: 50, allRows: [] }}
+    }};
+
+    function extractTrRows(html) {{
+      if (!html) return [];
+      const temp = document.createElement('tbody');
+      temp.innerHTML = html.trim();
+      const trs = Array.from(temp.querySelectorAll('tr')).filter(function(tr) {{
+        return !tr.querySelector('td[colspan]');
+      }});
+      return trs.map(function(tr) {{ return tr.outerHTML; }});
+    }}
+
+    function renderPaginatedTable(tab) {{
+      const st = paginationState[tab];
+      const tbody = document.getElementById(tab === 'csv' ? 'csv-trades-body' : 'exchange-trades-body');
+      const infoEl = document.getElementById(tab + '-page-info');
+      const pillsEl = document.getElementById(tab + '-page-pills');
+      const prevBtn = document.getElementById(tab + '-prev-btn');
+      const nextBtn = document.getElementById(tab + '-next-btn');
+      const moreBtn = document.getElementById(tab + '-more-btn');
+      const countPill = document.getElementById(tab === 'csv' ? 'tab-count-csv' : 'tab-count-exchange');
+      if (!tbody) return;
+
+      const total = st.allRows.length;
+      if (countPill) countPill.textContent = total;
+
+      if (total === 0) {{
+        if (tab === 'csv') {{
+          tbody.innerHTML = '<tr><td colspan="11" style="text-align:center; padding:24px; color:#64748b;">No internal bot events recorded in bybit_trades.csv yet for the current session.<br><small style="color:#475569;">Switch to the <b>Bybit Exchange Closed P&amp;L</b> tab to see official Bybit closed position executions.</small></td></tr>';
+        }} else {{
+          tbody.innerHTML = '<tr><td colspan="13" style="text-align:center; padding:24px; color:#64748b;">No closed position fills retrieved from Bybit UTA API yet.</td></tr>';
+        }}
+        if (infoEl) infoEl.textContent = 'Showing 0 trades';
+        if (pillsEl) pillsEl.innerHTML = '';
+        if (prevBtn) prevBtn.disabled = true;
+        if (nextBtn) nextBtn.disabled = true;
+        if (moreBtn) moreBtn.style.display = 'none';
+        return;
+      }}
+
+      const effPageSize = (st.pageSize === 'all') ? total : parseInt(st.pageSize, 10);
+      const totalPages = Math.max(1, Math.ceil(total / effPageSize));
+      if (st.page > totalPages) st.page = totalPages;
+      if (st.page < 1) st.page = 1;
+
+      const startIdx = (st.page - 1) * effPageSize;
+      const endIdx = Math.min(startIdx + effPageSize, total);
+      const visible = st.allRows.slice(startIdx, endIdx);
+
+      tbody.innerHTML = visible.join('\\n');
+
+      if (infoEl) {{
+        infoEl.textContent = 'Showing ' + (startIdx + 1) + '–' + endIdx + ' of ' + total + ' trades';
+      }}
+
+      if (prevBtn) prevBtn.disabled = (st.page <= 1);
+      if (nextBtn) nextBtn.disabled = (st.page >= totalPages);
+
+      if (moreBtn) {{
+        if (endIdx < total && st.pageSize !== 'all') {{
+          const remaining = total - endIdx;
+          const step = Math.min(50, remaining);
+          moreBtn.style.display = 'inline-flex';
+          moreBtn.textContent = '⬇ Show More (+' + step + ')';
+        }} else {{
+          moreBtn.style.display = 'none';
+        }}
+      }}
+
+      if (pillsEl) {{
+        if (totalPages <= 1) {{
+          pillsEl.innerHTML = '<span class="page-pill active">1</span>';
+        }} else {{
+          let html = '';
+          const maxPills = 5;
+          let startP = Math.max(1, st.page - 2);
+          let endP = Math.min(totalPages, startP + maxPills - 1);
+          if (endP - startP < maxPills - 1) {{
+            startP = Math.max(1, endP - maxPills + 1);
+          }}
+
+          if (startP > 1) {{
+            html += '<button type="button" class="page-pill" onclick="gotoPage(\\'' + tab + '\\', 1)">1</button>';
+            if (startP > 2) html += '<span style="color:#64748b; padding:0 2px;">…</span>';
+          }}
+
+          for (let p = startP; p <= endP; p++) {{
+            const cls = (p === st.page) ? 'active' : '';
+            html += '<button type="button" class="page-pill ' + cls + '" onclick="gotoPage(\\'' + tab + '\\', ' + p + ')">' + p + '</button>';
+          }}
+
+          if (endP < totalPages) {{
+            if (endP < totalPages - 1) html += '<span style="color:#64748b; padding:0 2px;">…</span>';
+            html += '<button type="button" class="page-pill" onclick="gotoPage(\\'' + tab + '\\', ' + totalPages + ')">' + totalPages + '</button>';
+          }}
+          pillsEl.innerHTML = html;
+        }}
+      }}
+    }}
+
+    function gotoPage(tab, p) {{
+      paginationState[tab].page = p;
+      renderPaginatedTable(tab);
+    }}
+
+    function changePage(tab, delta) {{
+      paginationState[tab].page += delta;
+      renderPaginatedTable(tab);
+    }}
+
+    function changePageSize(tab, size) {{
+      paginationState[tab].pageSize = size;
+      paginationState[tab].page = 1;
+      renderPaginatedTable(tab);
+    }}
+
+    function showMoreRows(tab) {{
+      const st = paginationState[tab];
+      if (st.pageSize === 'all') return;
+      const curSize = parseInt(st.pageSize, 10);
+      st.pageSize = curSize + 50;
+      const sel = document.getElementById(tab + '-page-size');
+      if (sel) {{
+        let opt = Array.from(sel.options).find(function(o) {{ return o.value == st.pageSize; }});
+        if (!opt) {{
+          opt = document.createElement('option');
+          opt.value = st.pageSize;
+          opt.textContent = st.pageSize;
+          sel.insertBefore(opt, sel.lastElementChild);
+        }}
+        sel.value = st.pageSize;
+      }}
+      renderPaginatedTable(tab);
+    }}
+
     function applyLiveUpdate(d) {{
       if (!d) return;
       if (d.brand_status_html) {{
@@ -2074,16 +2383,16 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         if (el) el.innerHTML = d.active_positions_html;
       }}
       if (d.csv_trades_html) {{
-        const el = document.getElementById('csv-trades-body');
-        if (el) el.innerHTML = d.csv_trades_html;
+        paginationState.csv.allRows = extractTrRows(d.csv_trades_html);
+        renderPaginatedTable('csv');
       }}
       if (d.csv_count !== undefined) {{
         const el = document.getElementById('tab-count-csv');
         if (el) el.textContent = d.csv_count;
       }}
       if (d.exchange_trades_html) {{
-        const el = document.getElementById('exchange-trades-body');
-        if (el) el.innerHTML = d.exchange_trades_html;
+        paginationState.exchange.allRows = extractTrRows(d.exchange_trades_html);
+        renderPaginatedTable('exchange');
       }}
       if (d.exchange_count !== undefined) {{
         const el = document.getElementById('tab-count-exchange');
@@ -2116,8 +2425,9 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         const res = await fetch('/api/clear-trades');
         const data = await res.json();
         if (data && data.success) {{
-          const b = document.getElementById('csv-trades-body');
-          if (b) b.innerHTML = '<tr><td colspan="11" style="text-align:center; padding:24px; color:#64748b;">No internal bot events recorded in bybit_trades.csv yet for the current session.</td></tr>';
+          paginationState.csv.allRows = [];
+          paginationState.csv.page = 1;
+          renderPaginatedTable('csv');
           const c = document.getElementById('tab-count-csv');
           if (c) c.textContent = '0';
         }}
@@ -2149,6 +2459,18 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         if (clearWrap) clearWrap.style.display = 'flex';
       }}
       localStorage.setItem('active_trade_tab', tab);
+    }}
+
+    // Initial pagination setup from server-rendered rows
+    const initCsvTbody = document.getElementById('csv-trades-body');
+    if (initCsvTbody) {{
+      paginationState.csv.allRows = extractTrRows(initCsvTbody.innerHTML);
+      renderPaginatedTable('csv');
+    }}
+    const initExchTbody = document.getElementById('exchange-trades-body');
+    if (initExchTbody) {{
+      paginationState.exchange.allRows = extractTrRows(initExchTbody.innerHTML);
+      renderPaginatedTable('exchange');
     }}
 
     // Auto-restore trade tab preference or auto-switch to exchange if CSV is empty

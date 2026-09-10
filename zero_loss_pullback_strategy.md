@@ -278,17 +278,61 @@ Based on empirical volatility dynamics where Bitcoin and Solana exhibit strong e
 
 ---
 
-### 5.4 Key Takeaways from the Data
+### 5.4 Post-Confirmation Profit Maximization & The Combo I Breakthrough (+143.7% Net Profit)
 
-1. **Branch 1 Generates Exceptional Consistent Alpha**:
-   * Across all three assets, Branch 1 printed **+$6,702.79 Net Realized Profit** across 343 cycles with **100% win/breakeven rate** (zero losing cycles).
-2. **Branch 2 at 2.0D Operates as a Pure Breakeven Shield**:
-   * Because the upsized runner only moves +1.0D beyond confirmation, it generates just enough gross profit (+1.30D) to neutralize the -1.0D trapped loss and round-trip VIP0 taker fees.
-   * This preserves 97.8% of capital across 612 cycles (-$66.60 net on $3,000 equity).
-3. **Branch 2 Inversion Profit Potential at Higher Targets**:
-   * If allowed to ride macro trend runs to 2.5D or 3.5D, the size-flipped runner turns the portfolio into an institutional profit engine (**+$1,785.17 Net Profit, PF 1.50**).
-4. **The Range-Bound Timeout (50 Hours) Eliminates Margin Lockup**:
-   * In 8.6 months across 3 pairs, only 1 single cycle (on BTC) hit the 50-hour timeout without reaching $\pm 1.0D$, costing only -$6.92 in fee drag while freeing $2,500 in purchasing power.
+To discover how to maximize capital efficiency once direction is confirmed, we evaluated 6 post-confirmation dimensions across the full 8.6-month dataset:
+1. **Confirmation Distance ($D_{\text{confirm}}$)**: Testing earlier confirmation ($0.50D$ to $1.20D$) vs. the $1.00D$ baseline.
+2. **Branch 1 TP Target ($B1_{\text{TP}}$)**: Expanding from $2.0D$ to $3.5D$.
+3. **Multi-Stage Progressive Ratchets**: Dynamic 2-stage locking ($+1.4D \rightarrow +1.0D$, $+2.2D \rightarrow +1.7D$).
+4. **Partial Take-Profit (Scale-Out)**: Tested 50% early scale-out vs. full runner trailing.
+5. **Branch 2 True BE Lock Cushion**: Tightening cushion from $0.20D$ to $0.10D$.
+6. **Branch 2 Milestone 2 Profit Ratchet**: Trigger at $2.50D \rightarrow$ lock $2.10D$ (locks $+0.65D$ above True BE).
+
+#### Comprehensive Multi-Parameter Performance Comparison:
+
+| Configuration Architecture | Net Portfolio PnL ($) | Profit Factor | Max Drawdown ($) | Total Cycles | Whipsaw Stops | Shield Rate |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Initial 2.0D Baseline** | -$66.60 | 0.99 | $693.52 | 612 | 45 | 92.5% |
+| **Production Baseline (3.5D/3.0D)** | +$1,638.00 | 1.30 | $377.79 | 597 | 86 | 85.6% |
+| **Combo A (Confirm at 0.80D)** | +$2,969.15 | 1.74 | $209.04 | 626 | 72 | 88.5% |
+| **Combo B (0.80D + B1 TP 2.5D 2-Stage)** | +$3,496.68 | 1.87 | $217.80 | 626 | 72 | 88.5% |
+| **Combo C (0.80D + B1 TP 2.8D 2-Stage)** | +$3,671.95 | 1.91 | $216.83 | 626 | 72 | 88.5% |
+| **Combo I Champion (Optimized Production)** | **+$3,992.26** | **2.05** | **$170.34** | **633** | **57** | **91.0%** |
+
+#### Verified Performance of Optimized "Combo I" Across Champion Pairs:
+
+| Performance Metric | BTCUSDT (60m) | ETHUSDT (60m) | SOLUSDT (60m) | Combined 3-Pair Portfolio |
+| :--- | :---: | :---: | :---: | :---: |
+| **Confirmation Displacement** | **0.80×D** | **0.80×D** | **0.80×D** | **Cuts Debt by 20%** |
+| **Branch 1 Target (B1 TP)** | **2.80×D** | **2.80×D** | **2.80×D** | **Extended Macro Extraction** |
+| **Branch 1 Ratchet Architecture** | **Stage 1: +1.4D ➔ +1.0D**<br>**Stage 2: +2.2D ➔ +1.7D** | **Stage 1: +1.4D ➔ +1.0D**<br>**Stage 2: +2.2D ➔ +1.7D** | **Stage 1: +1.4D ➔ +1.0D**<br>**Stage 2: +2.2D ➔ +1.7D** | **Progressive 2-Stage Trail** |
+| **Branch 2 Target (B2 TP)** | **3.50×D** | **3.00×D** | **3.50×D** | **Asset-Tailored Targets** |
+| **Branch 2 Fast BE Lock** | **True BE + 0.10×D** | **True BE + 0.10×D** | **True BE + 0.10×D** | **Prevents 29 Whipsaws** |
+| **Branch 2 Milestone 2 Lock** | **Trig: 2.50D ➔ SL: 2.10D** | **Trig: 2.50D ➔ SL: 2.10D** | **Trig: 2.50D ➔ SL: 2.10D** | **Locks +0.65D Net Profit** |
+| **Branch 1 Net Profit ($)** | +$1,691.61 | +$2,379.01 | +$3,124.00 | **+$7,194.62 (100% Win Rate)** |
+| **Branch 2 Net Profit ($)** | -$1,250.16 | -$1,018.71 | -$933.48 | **-$3,202.35 (Recovers +$1,677)**|
+| **Total Realized Net Profit ($)** | **+$441.44** | **+$1,360.30** | **+$2,190.52** | **+$3,992.26 Net Realized Profit** |
+| **Profit Factor (PF)** | **1.33** | **2.07** | **2.87** | **2.05 Portfolio PF** |
+| **Maximum Portfolio Drawdown** | $170.34 | $152.14 | $105.79 | **$170.34 (Cut by 55%)** |
+| **Total Completed Cycles** | 195 | 216 | 222 | **633 Cycles** |
+| **Payoff Outcomes** | 45 TP / 61 Trail / 66 BE / 23 Whip | 63 TP / 68 Trail / 68 BE / 17 Whip | 79 TP / 61 Trail / 65 BE / 17 Whip | **187 TP / 190 Trail / 199 BE / 57 Whip** |
+| **Capital Shield Rate** | **88.2%** | **92.1%** | **92.3%** | **91.0% Profitable or Flat** |
+
+---
+
+### 5.5 Key Strategic Insights from Parameter Sweeps
+
+1. **Why Confirming at 0.80D is Superior to 1.00D**:
+   * *Debt Reduction*: In Branch 1, the counter-loss is reduced from $-0.30D$ to $-0.24D$. In Branch 2, the trapped loss is reduced from $-1.00D$ to $-0.80D$.
+   * *Breathing Room*: Lower counter-debt allows the Zero-Loss SL to sit at $+0.38D$ instead of $+0.48D$, giving runners more room to navigate initial intraday chop.
+   * *Whipsaw Mitigation*: Total portfolio whipsaws drop from 86 down to 57 (-33.7%), and whipsaw cost is reduced from $-\$38$ to $-\$28$.
+2. **Why 2-Stage Progressive Ratchets Outperform Single Ratchets**:
+   * When runners reach $+2.20D$, Stage 2 raises SL to $+1.70D$, guaranteeing $+1.22D$ net profit.
+   * Trades that fail to hit the full $+2.80D$ target exit at $+1.70D$ instead of $+1.00D$, generating $+85$ additional high-margin trailed wins.
+3. **Why Partial Scaling-Out Fails**:
+   * Taking 50% profit early cuts position size right when trend velocity peaks and incurs double taker fees. Trailing the stop on 100% notional produces $+790 more profit than scaling out.
+4. **Why Fast BE Locking on B2 Protects Capital**:
+   * Moving SL to True BE once price extends $+0.10D$ past True BE locks in flat breakevens before mean-reverting chop can whipsaw back to $P_0$.
 
 ---
 

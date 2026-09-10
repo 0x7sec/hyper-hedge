@@ -58,6 +58,7 @@ class PairState:
     entry_ts: float = 0.0
     bars_elapsed: int = 0
     b1_trailed: bool = False
+    b1_trailed_stage2: bool = False
     b2_trailed_to_be: bool = False
     b2_trailed_to_plus_1d: bool = False
     base_be_sl: Decimal = Decimal("0")
@@ -714,6 +715,7 @@ class BybitTradingEngine:
         pair.entry_ts = time.time()
         pair.bars_elapsed = 0
         pair.b1_trailed = False
+        pair.b1_trailed_stage2 = False
         pair.b2_trailed_to_be = False
         pair.b2_trailed_to_plus_1d = False
         pair.base_be_sl = Decimal("0")
@@ -774,8 +776,8 @@ class BybitTradingEngine:
                 return
 
             if pair.signal_direction == "bullish":
-                # BRANCH 1: Signal Was Right (Market expands +1.0D upward)
-                if price >= entry_px * (Decimal("1") + d_val):
+                # BRANCH 1: Signal Was Right (Market expands in signal direction by confirm_mult * D)
+                if price >= entry_px * (Decimal("1") + pair.cfg.confirm_mult * d_val):
                     pair.phase = "RUNNER_B1"
                     confirm_px = price
                     # 1. Collapse 30% Counter Short Leg
@@ -797,19 +799,20 @@ class BybitTradingEngine:
                         pair.long_leg.tp_target = long_tp
                         pair.base_be_sl = long_sl_be
                         pair.b1_trailed = False
+                        pair.b1_trailed_stage2 = False
                         self.service.set_trading_stop(1, pair.long_leg.trailing_sl, pair.long_leg.tp_target, symbol=sym)
                         self._csv_event(pair, pair.long_leg, "B1_ARMED", confirm_px)
 
                     pair.status_msg = f"RUNNER B1 (Long @ {price:.2f}, SL: {long_sl_be:.2f}, TP: {long_tp:.2f})"
                     console.print(
-                        f"\n[bold green]>>> [{sym}] BRANCH 1 HIT (+1.0D)! Counter Short collapsed. "
+                        f"\n[bold green]>>> [{sym}] BRANCH 1 HIT (+{pair.cfg.confirm_mult}D)! Counter Short collapsed. "
                         f"Long Armed (SL: {long_sl_be:.2f}, TP: {long_tp:.2f}) <<<[/bold green]"
                     )
                     self._dump_state_json()
                     return
 
-                # BRANCH 2: Signal Was Wrong / Trap (Market dumps -1.0D downward)
-                elif price <= entry_px * (Decimal("1") - d_val):
+                # BRANCH 2: Signal Was Wrong / Trap (Market dumps against signal direction)
+                elif price <= entry_px * (Decimal("1") - pair.cfg.confirm_mult * d_val):
                     pair.phase = "RUNNER_B2"
                     confirm_px = price
                     # 1. Collapse Trapped 100% Primary Long Leg
@@ -852,15 +855,15 @@ class BybitTradingEngine:
 
                     pair.status_msg = f"RUNNER B2 (Short Size-Flip @ {price:.2f}, SL: {curr_sl:.2f}, TP: {tp_level:.2f})"
                     console.print(
-                        f"\n[bold yellow]>>> [{sym}] BRANCH 2 HIT (-1.0D)! Long collapsed. "
+                        f"\n[bold yellow]>>> [{sym}] BRANCH 2 HIT (-{pair.cfg.confirm_mult}D)! Long collapsed. "
                         f"Short Size-Flipped to 100% Runner (SL: {curr_sl:.2f}, TP: {tp_level:.2f}) <<<[/bold yellow]"
                     )
                     self._dump_state_json()
                     return
 
             elif pair.signal_direction == "bearish":
-                # BRANCH 1: Signal Was Right (Market expands -1.0D downward)
-                if price <= entry_px * (Decimal("1") - d_val):
+                # BRANCH 1: Signal Was Right (Market expands downward)
+                if price <= entry_px * (Decimal("1") - pair.cfg.confirm_mult * d_val):
                     pair.phase = "RUNNER_B1"
                     confirm_px = price
                     # 1. Collapse 30% Counter Long Leg
@@ -882,19 +885,20 @@ class BybitTradingEngine:
                         pair.short_leg.tp_target = short_tp
                         pair.base_be_sl = short_sl_be
                         pair.b1_trailed = False
+                        pair.b1_trailed_stage2 = False
                         self.service.set_trading_stop(2, pair.short_leg.trailing_sl, pair.short_leg.tp_target, symbol=sym)
                         self._csv_event(pair, pair.short_leg, "B1_ARMED", confirm_px)
 
                     pair.status_msg = f"RUNNER B1 (Short @ {price:.2f}, SL: {short_sl_be:.2f}, TP: {short_tp:.2f})"
                     console.print(
-                        f"\n[bold green]>>> [{sym}] BRANCH 1 HIT (-1.0D)! Counter Long collapsed. "
+                        f"\n[bold green]>>> [{sym}] BRANCH 1 HIT (-{pair.cfg.confirm_mult}D)! Counter Long collapsed. "
                         f"Short Armed (SL: {short_sl_be:.2f}, TP: {short_tp:.2f}) <<<[/bold green]"
                     )
                     self._dump_state_json()
                     return
 
-                # BRANCH 2: Signal Was Wrong / Trap (Market pumps +1.0D upward)
-                elif price >= entry_px * (Decimal("1") + d_val):
+                # BRANCH 2: Signal Was Wrong / Trap (Market pumps upward)
+                elif price >= entry_px * (Decimal("1") + pair.cfg.confirm_mult * d_val):
                     pair.phase = "RUNNER_B2"
                     confirm_px = price
                     # 1. Collapse Trapped 100% Primary Short Leg
@@ -937,7 +941,7 @@ class BybitTradingEngine:
 
                     pair.status_msg = f"RUNNER B2 (Long Size-Flip @ {price:.2f}, SL: {curr_sl:.2f}, TP: {tp_level:.2f})"
                     console.print(
-                        f"\n[bold yellow]>>> [{sym}] BRANCH 2 HIT (+1.0D)! Short collapsed. "
+                        f"\n[bold yellow]>>> [{sym}] BRANCH 2 HIT (+{pair.cfg.confirm_mult}D)! Short collapsed. "
                         f"Long Size-Flipped to 100% Runner (SL: {curr_sl:.2f}, TP: {tp_level:.2f}) <<<[/bold yellow]"
                     )
                     self._dump_state_json()
@@ -946,19 +950,29 @@ class BybitTradingEngine:
         # -- PHASE 2: RUNNER B1 (Trend Expansion & Zero-Loss Pullback) ---------
         elif pair.phase == "RUNNER_B1":
             if pair.signal_direction == "bullish" and pair.long_leg and pair.long_leg.status == "ACTIVE":
-                # Ratchet Milestone: +1.40D reached -> Ratchet SL to P0 + 1.0D (+1.0D profit lock)
-                trail_trig = entry_px * (Decimal("1") + Decimal("1.40") * d_val)
-                if price >= trail_trig and not pair.b1_trailed:
-                    new_sl = entry_px * (Decimal("1") + Decimal("1.00") * d_val)
+                # Ratchet Milestone 2: +2.20D reached -> Ratchet SL to P0 + 1.70D (+1.7D profit lock)
+                trail_trig2 = entry_px * (Decimal("1") + pair.cfg.b1_r2_trig * d_val)
+                if price >= trail_trig2 and not pair.b1_trailed_stage2:
+                    new_sl2 = entry_px * (Decimal("1") + pair.cfg.b1_r2_sl * d_val)
+                    pair.long_leg.trailing_sl = new_sl2
+                    pair.b1_trailed = True
+                    pair.b1_trailed_stage2 = True
+                    self.service.set_trading_stop(1, pair.long_leg.trailing_sl, pair.long_leg.tp_target, symbol=sym)
+                    console.print(f"\n[bold green]>>> [{sym} LONG B1 RATCHET STAGE 2] SL raised to {new_sl2:.2f} (+{pair.cfg.b1_r2_sl}D Locked) <<<[/bold green]")
+                    self._csv_event(pair, pair.long_leg, "B1_RATCHET_2", price)
+
+                # Ratchet Milestone 1: +1.40D reached -> Ratchet SL to P0 + 1.0D (+1.0D profit lock)
+                elif price >= entry_px * (Decimal("1") + pair.cfg.b1_r1_trig * d_val) and not pair.b1_trailed:
+                    new_sl = entry_px * (Decimal("1") + pair.cfg.b1_r1_sl * d_val)
                     pair.long_leg.trailing_sl = new_sl
                     pair.b1_trailed = True
                     self.service.set_trading_stop(1, pair.long_leg.trailing_sl, pair.long_leg.tp_target, symbol=sym)
-                    console.print(f"\n[bold green]>>> [{sym} LONG B1 RATCHET] SL raised to {new_sl:.2f} (+1.0D Locked) <<<[/bold green]")
-                    self._csv_event(pair, pair.long_leg, "B1_RATCHET", price)
+                    console.print(f"\n[bold green]>>> [{sym} LONG B1 RATCHET STAGE 1] SL raised to {new_sl:.2f} (+{pair.cfg.b1_r1_sl}D Locked) <<<[/bold green]")
+                    self._csv_event(pair, pair.long_leg, "B1_RATCHET_1", price)
 
                 # TP Hit
                 if price >= pair.long_leg.tp_target:
-                    console.print(f"\n[bold green]>>> [{sym} LONG B1 TP HIT] @ {price:.2f} <<<[/bold green]")
+                    console.print(f"\n[bold green]>>> [{sym} LONG B1 TP HIT ({pair.cfg.b1_tp_mult}D)] @ {price:.2f} <<<[/bold green]")
                     self.service.close_position(1, pair.long_leg.size, symbol=sym)
                     pair.long_leg.status = "CLOSED_TP"
                     pair.long_leg.exit_price = price
@@ -977,19 +991,29 @@ class BybitTradingEngine:
                     return
 
             elif pair.signal_direction == "bearish" and pair.short_leg and pair.short_leg.status == "ACTIVE":
-                # Ratchet Milestone: -1.40D reached -> Ratchet SL to P0 - 1.0D (+1.0D profit lock)
-                trail_trig = entry_px * (Decimal("1") - Decimal("1.40") * d_val)
-                if price <= trail_trig and not pair.b1_trailed:
-                    new_sl = entry_px * (Decimal("1") - Decimal("1.00") * d_val)
+                # Ratchet Milestone 2: -2.20D reached -> Ratchet SL to P0 - 1.70D (+1.7D profit lock)
+                trail_trig2 = entry_px * (Decimal("1") - pair.cfg.b1_r2_trig * d_val)
+                if price <= trail_trig2 and not pair.b1_trailed_stage2:
+                    new_sl2 = entry_px * (Decimal("1") - pair.cfg.b1_r2_sl * d_val)
+                    pair.short_leg.trailing_sl = new_sl2
+                    pair.b1_trailed = True
+                    pair.b1_trailed_stage2 = True
+                    self.service.set_trading_stop(2, pair.short_leg.trailing_sl, pair.short_leg.tp_target, symbol=sym)
+                    console.print(f"\n[bold green]>>> [{sym} SHORT B1 RATCHET STAGE 2] SL lowered to {new_sl2:.2f} (+{pair.cfg.b1_r2_sl}D Locked) <<<[/bold green]")
+                    self._csv_event(pair, pair.short_leg, "B1_RATCHET_2", price)
+
+                # Ratchet Milestone 1: -1.40D reached -> Ratchet SL to P0 - 1.0D (+1.0D profit lock)
+                elif price <= entry_px * (Decimal("1") - pair.cfg.b1_r1_trig * d_val) and not pair.b1_trailed:
+                    new_sl = entry_px * (Decimal("1") - pair.cfg.b1_r1_sl * d_val)
                     pair.short_leg.trailing_sl = new_sl
                     pair.b1_trailed = True
                     self.service.set_trading_stop(2, pair.short_leg.trailing_sl, pair.short_leg.tp_target, symbol=sym)
-                    console.print(f"\n[bold green]>>> [{sym} SHORT B1 RATCHET] SL lowered to {new_sl:.2f} (+1.0D Locked) <<<[/bold green]")
-                    self._csv_event(pair, pair.short_leg, "B1_RATCHET", price)
+                    console.print(f"\n[bold green]>>> [{sym} SHORT B1 RATCHET STAGE 1] SL lowered to {new_sl:.2f} (+{pair.cfg.b1_r1_sl}D Locked) <<<[/bold green]")
+                    self._csv_event(pair, pair.short_leg, "B1_RATCHET_1", price)
 
                 # TP Hit
                 if price <= pair.short_leg.tp_target:
-                    console.print(f"\n[bold green]>>> [{sym} SHORT B1 TP HIT] @ {price:.2f} <<<[/bold green]")
+                    console.print(f"\n[bold green]>>> [{sym} SHORT B1 TP HIT ({pair.cfg.b1_tp_mult}D)] @ {price:.2f} <<<[/bold green]")
                     self.service.close_position(2, pair.short_leg.size, symbol=sym)
                     pair.short_leg.status = "CLOSED_TP"
                     pair.short_leg.exit_price = price
@@ -1010,19 +1034,19 @@ class BybitTradingEngine:
         # -- PHASE 3: RUNNER B2 (Size-Flip Trap Hunter) ------------------------
         elif pair.phase == "RUNNER_B2":
             if pair.signal_direction == "bullish" and pair.short_leg and pair.short_leg.status == "ACTIVE":
-                # Milestone 2: Reaches -2.80D -> Ratchet SL to -2.30D (+1.0D Profit Lock above True BE)
-                ratchet_trig = entry_px * (Decimal("1") - Decimal("2.80") * d_val)
-                sl_ratchet = entry_px * (Decimal("1") - Decimal("2.30") * d_val)
+                # Milestone 2: Reaches 2.50D -> Ratchet SL to 2.10D (+0.65D Profit Lock above True BE)
+                ratchet_trig = entry_px * (Decimal("1") - pair.cfg.b2_r2_trig * d_val)
+                sl_ratchet = entry_px * (Decimal("1") - pair.cfg.b2_r2_sl * d_val)
                 if price <= ratchet_trig and not pair.b2_trailed_to_plus_1d:
                     pair.short_leg.trailing_sl = sl_ratchet
                     pair.b2_trailed_to_plus_1d = True
                     pair.b2_trailed_to_be = True
                     self.service.set_trading_stop(2, pair.short_leg.trailing_sl, pair.short_leg.tp_target, symbol=sym)
-                    console.print(f"\n[bold green]>>> [{sym} SHORT B2 PROFIT RATCHET] SL lowered to {sl_ratchet:.2f} (+1.0D Locked) <<<[/bold green]")
+                    console.print(f"\n[bold green]>>> [{sym} SHORT B2 PROFIT RATCHET] SL lowered to {sl_ratchet:.2f} (+{pair.cfg.b2_r2_sl}D Locked) <<<[/bold green]")
                     self._csv_event(pair, pair.short_leg, "B2_RATCHET_PROFIT", price)
 
-                # Milestone 1: Extends past True BE (-2.20D) -> Lock True BE (Zero Loss Secured)
-                elif price <= pair.base_be_sl - (entry_px * Decimal("0.20") * d_val) and not pair.b2_trailed_to_be:
+                # Milestone 1: Extends past True BE (cushion = 0.10D) -> Lock True BE (Zero Loss Secured)
+                elif price <= pair.base_be_sl - (entry_px * pair.cfg.b2_be_cushion * d_val) and not pair.b2_trailed_to_be:
                     pair.short_leg.trailing_sl = pair.base_be_sl
                     pair.b2_trailed_to_be = True
                     self.service.set_trading_stop(2, pair.short_leg.trailing_sl, pair.short_leg.tp_target, symbol=sym)
@@ -1050,19 +1074,19 @@ class BybitTradingEngine:
                     return
 
             elif pair.signal_direction == "bearish" and pair.long_leg and pair.long_leg.status == "ACTIVE":
-                # Milestone 2: Reaches +2.80D -> Ratchet SL to +2.30D (+1.0D Profit Lock above True BE)
-                ratchet_trig = entry_px * (Decimal("1") + Decimal("2.80") * d_val)
-                sl_ratchet = entry_px * (Decimal("1") + Decimal("2.30") * d_val)
+                # Milestone 2: Reaches 2.50D -> Ratchet SL to 2.10D (+0.65D Profit Lock above True BE)
+                ratchet_trig = entry_px * (Decimal("1") + pair.cfg.b2_r2_trig * d_val)
+                sl_ratchet = entry_px * (Decimal("1") + pair.cfg.b2_r2_sl * d_val)
                 if price >= ratchet_trig and not pair.b2_trailed_to_plus_1d:
                     pair.long_leg.trailing_sl = sl_ratchet
                     pair.b2_trailed_to_plus_1d = True
                     pair.b2_trailed_to_be = True
                     self.service.set_trading_stop(1, pair.long_leg.trailing_sl, pair.long_leg.tp_target, symbol=sym)
-                    console.print(f"\n[bold green]>>> [{sym} LONG B2 PROFIT RATCHET] SL raised to {sl_ratchet:.2f} (+1.0D Locked) <<<[/bold green]")
+                    console.print(f"\n[bold green]>>> [{sym} LONG B2 PROFIT RATCHET] SL raised to {sl_ratchet:.2f} (+{pair.cfg.b2_r2_sl}D Locked) <<<[/bold green]")
                     self._csv_event(pair, pair.long_leg, "B2_RATCHET_PROFIT", price)
 
-                # Milestone 1: Extends past True BE (+2.20D) -> Lock True BE (Zero Loss Secured)
-                elif price >= pair.base_be_sl + (entry_px * Decimal("0.20") * d_val) and not pair.b2_trailed_to_be:
+                # Milestone 1: Extends past True BE (cushion = 0.10D) -> Lock True BE (Zero Loss Secured)
+                elif price >= pair.base_be_sl + (entry_px * pair.cfg.b2_be_cushion * d_val) and not pair.b2_trailed_to_be:
                     pair.long_leg.trailing_sl = pair.base_be_sl
                     pair.b2_trailed_to_be = True
                     self.service.set_trading_stop(1, pair.long_leg.trailing_sl, pair.long_leg.tp_target, symbol=sym)
@@ -1209,6 +1233,7 @@ class BybitTradingEngine:
         pair.entry_ts = 0.0
         pair.bars_elapsed = 0
         pair.b1_trailed = False
+        pair.b1_trailed_stage2 = False
         pair.b2_trailed_to_be = False
         pair.b2_trailed_to_plus_1d = False
         pair.base_be_sl = Decimal("0")

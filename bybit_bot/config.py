@@ -17,14 +17,22 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "adx_min": Decimal("15"),
         "adx_period": 14,
         "d_pct": Decimal("0.70"),
-        "sl_pct": Decimal("0.34"),  # Base Zero-Loss SL = +0.48D
-        "tp_pct": Decimal("1.40"),  # Branch 1 Take-Profit = +2.0D
-        "b1_tp_mult": Decimal("2.00"),
-        "b2_tp_mult": Decimal("3.50"),  # 3.5D Take-Profit on Branch 2 for BTC
+        "confirm_mult": Decimal("0.80"),  # Confirm direction at 0.80D (reduces debt, widens runner)
+        "sl_pct": Decimal("0.34"),        # Base Zero-Loss SL = +0.48D
+        "tp_pct": Decimal("1.96"),        # Branch 1 Take-Profit = +2.8D (0.70 * 2.8)
+        "b1_tp_mult": Decimal("2.80"),    # 2.8D Take-Profit on Branch 1
+        "b1_r1_trig": Decimal("1.40"),    # Stage 1 Ratchet trigger (+1.40D)
+        "b1_r1_sl": Decimal("1.00"),      # Stage 1 SL raised to (+1.00D)
+        "b1_r2_trig": Decimal("2.20"),    # Stage 2 Ratchet trigger (+2.20D)
+        "b1_r2_sl": Decimal("1.70"),      # Stage 2 SL raised to (+1.70D)
+        "b2_tp_mult": Decimal("3.50"),    # 3.5D Take-Profit on Branch 2 for BTC
+        "b2_be_cushion": Decimal("0.10"), # Fast True BE Lock triggered at True BE + 0.10D
+        "b2_r2_trig": Decimal("2.50"),    # Milestone 2 profit ratchet on B2 (2.50D)
+        "b2_r2_sl": Decimal("2.10"),      # Milestone 2 SL raised to 2.10D (locks +0.65D net)
         "ratchet_step_pct": Decimal("0.25"),
         "be_lock": True,
         "be_buffer_pct": Decimal("0.34"),
-        "size": Decimal("0.04"),   # ~$2,500 notional per pair on $1,000 capital
+        "size": Decimal("0.04"),          # ~$2,500 notional per pair on $1,000 capital
         "asymmetric": True,
         "hedge_ratio": Decimal("0.30"),
         "timeout_bars": 50,
@@ -36,14 +44,22 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "adx_min": Decimal("0"),
         "adx_period": 14,
         "d_pct": Decimal("0.80"),
-        "sl_pct": Decimal("0.38"),  # Base Zero-Loss SL = +0.48D
-        "tp_pct": Decimal("1.60"),  # Branch 1 Take-Profit = +2.0D
-        "b1_tp_mult": Decimal("2.00"),
-        "b2_tp_mult": Decimal("3.00"),  # 3.0D Take-Profit on Branch 2 for ETH
+        "confirm_mult": Decimal("0.80"),  # Confirm direction at 0.80D
+        "sl_pct": Decimal("0.38"),        # Base Zero-Loss SL = +0.48D
+        "tp_pct": Decimal("2.24"),        # Branch 1 Take-Profit = +2.8D (0.80 * 2.8)
+        "b1_tp_mult": Decimal("2.80"),    # 2.8D Take-Profit on Branch 1
+        "b1_r1_trig": Decimal("1.40"),
+        "b1_r1_sl": Decimal("1.00"),
+        "b1_r2_trig": Decimal("2.20"),
+        "b1_r2_sl": Decimal("1.70"),
+        "b2_tp_mult": Decimal("3.00"),    # 3.0D Take-Profit on Branch 2 for ETH
+        "b2_be_cushion": Decimal("0.10"),
+        "b2_r2_trig": Decimal("2.50"),
+        "b2_r2_sl": Decimal("2.10"),
         "ratchet_step_pct": Decimal("0.25"),
         "be_lock": True,
         "be_buffer_pct": Decimal("0.38"),
-        "size": Decimal("1.0"),    # ~$2,500 notional per pair on $1,000 capital
+        "size": Decimal("1.0"),           # ~$2,500 notional per pair on $1,000 capital
         "asymmetric": True,
         "hedge_ratio": Decimal("0.30"),
         "timeout_bars": 50,
@@ -52,17 +68,25 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "candle_interval": "60",
         "ema_fast": 9,
         "ema_slow": 21,
-        "adx_min": Decimal("15"),  # ADX>15 filters flat ranges
+        "adx_min": Decimal("15"),         # ADX>15 filters flat ranges
         "adx_period": 14,
         "d_pct": Decimal("0.80"),
-        "sl_pct": Decimal("0.38"),  # Base Zero-Loss SL = +0.48D
-        "tp_pct": Decimal("1.60"),  # Branch 1 Take-Profit = +2.0D
-        "b1_tp_mult": Decimal("2.00"),
-        "b2_tp_mult": Decimal("3.50"),  # 3.5D Take-Profit on Branch 2 for SOL
+        "confirm_mult": Decimal("0.80"),  # Confirm direction at 0.80D
+        "sl_pct": Decimal("0.38"),        # Base Zero-Loss SL = +0.48D
+        "tp_pct": Decimal("2.24"),        # Branch 1 Take-Profit = +2.8D (0.80 * 2.8)
+        "b1_tp_mult": Decimal("2.80"),    # 2.8D Take-Profit on Branch 1
+        "b1_r1_trig": Decimal("1.40"),
+        "b1_r1_sl": Decimal("1.00"),
+        "b1_r2_trig": Decimal("2.20"),
+        "b1_r2_sl": Decimal("1.70"),
+        "b2_tp_mult": Decimal("3.50"),    # 3.5D Take-Profit on Branch 2 for SOL
+        "b2_be_cushion": Decimal("0.10"),
+        "b2_r2_trig": Decimal("2.50"),
+        "b2_r2_sl": Decimal("2.10"),
         "ratchet_step_pct": Decimal("0.25"),
         "be_lock": True,
         "be_buffer_pct": Decimal("0.38"),
-        "size": Decimal("15.0"),   # ~$2,500 notional per pair on $1,000 capital
+        "size": Decimal("15.0"),          # ~$2,500 notional per pair on $1,000 capital
         "asymmetric": True,
         "hedge_ratio": Decimal("0.30"),
         "timeout_bars": 50,
@@ -74,10 +98,18 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "adx_min": Decimal("15"),
         "adx_period": 14,
         "d_pct": Decimal("0.40"),
+        "confirm_mult": Decimal("0.80"),
         "sl_pct": Decimal("0.40"),
-        "tp_pct": Decimal("1.20"),
-        "b1_tp_mult": Decimal("2.00"),
+        "tp_pct": Decimal("1.12"),
+        "b1_tp_mult": Decimal("2.80"),
+        "b1_r1_trig": Decimal("1.40"),
+        "b1_r1_sl": Decimal("1.00"),
+        "b1_r2_trig": Decimal("2.20"),
+        "b1_r2_sl": Decimal("1.70"),
         "b2_tp_mult": Decimal("3.00"),
+        "b2_be_cushion": Decimal("0.10"),
+        "b2_r2_trig": Decimal("2.50"),
+        "b2_r2_sl": Decimal("2.10"),
         "ratchet_step_pct": Decimal("0.25"),
         "be_lock": True,
         "be_buffer_pct": Decimal("0.20"),
@@ -98,10 +130,18 @@ class SymbolConfig:
     adx_min: Decimal = Decimal("0")
     adx_period: int = 14
     d_pct: Decimal = Decimal("0.80")
+    confirm_mult: Decimal = Decimal("0.80")  # Confirm direction at 0.80D
     sl_pct: Decimal = Decimal("0.38")
-    tp_pct: Decimal = Decimal("1.60")
-    b1_tp_mult: Decimal = Decimal("2.00")
-    b2_tp_mult: Decimal = Decimal("3.50")
+    tp_pct: Decimal = Decimal("2.24")
+    b1_tp_mult: Decimal = Decimal("2.80")    # 2.8D Take-Profit on Branch 1
+    b2_tp_mult: Decimal = Decimal("3.50")    # Branch 2 TP target
+    b1_r1_trig: Decimal = Decimal("1.40")    # Stage 1 Ratchet trigger (+1.40D)
+    b1_r1_sl: Decimal = Decimal("1.00")      # Stage 1 SL raised to (+1.00D)
+    b1_r2_trig: Decimal = Decimal("2.20")    # Stage 2 Ratchet trigger (+2.20D)
+    b1_r2_sl: Decimal = Decimal("1.70")      # Stage 2 SL raised to (+1.70D)
+    b2_be_cushion: Decimal = Decimal("0.10") # Fast True BE lock cushion (+0.10D)
+    b2_r2_trig: Decimal = Decimal("2.50")    # Milestone 2 profit ratchet on B2 (2.50D)
+    b2_r2_sl: Decimal = Decimal("2.10")      # Milestone 2 SL raised to 2.10D (locks +0.65D net)
     ratchet_step_pct: Decimal = Decimal("0.25")
     be_lock: bool = True
     be_buffer_pct: Decimal = Decimal("0.38")
@@ -128,6 +168,9 @@ class SymbolConfig:
             if os.getenv(f"{pfx}D_PCT"):
                 try: params["d_pct"] = Decimal(os.getenv(f"{pfx}D_PCT"))
                 except Exception: pass
+            if os.getenv(f"{pfx}CONFIRM_MULT"):
+                try: params["confirm_mult"] = Decimal(os.getenv(f"{pfx}CONFIRM_MULT"))
+                except Exception: pass
             if os.getenv(f"{pfx}SL_PCT"):
                 try: params["sl_pct"] = Decimal(os.getenv(f"{pfx}SL_PCT"))
                 except Exception: pass
@@ -139,6 +182,27 @@ class SymbolConfig:
                 except Exception: pass
             if os.getenv(f"{pfx}B2_TP_MULT"):
                 try: params["b2_tp_mult"] = Decimal(os.getenv(f"{pfx}B2_TP_MULT"))
+                except Exception: pass
+            if os.getenv(f"{pfx}B1_R1_TRIG"):
+                try: params["b1_r1_trig"] = Decimal(os.getenv(f"{pfx}B1_R1_TRIG"))
+                except Exception: pass
+            if os.getenv(f"{pfx}B1_R1_SL"):
+                try: params["b1_r1_sl"] = Decimal(os.getenv(f"{pfx}B1_R1_SL"))
+                except Exception: pass
+            if os.getenv(f"{pfx}B1_R2_TRIG"):
+                try: params["b1_r2_trig"] = Decimal(os.getenv(f"{pfx}B1_R2_TRIG"))
+                except Exception: pass
+            if os.getenv(f"{pfx}B1_R2_SL"):
+                try: params["b1_r2_sl"] = Decimal(os.getenv(f"{pfx}B1_R2_SL"))
+                except Exception: pass
+            if os.getenv(f"{pfx}B2_BE_CUSHION"):
+                try: params["b2_be_cushion"] = Decimal(os.getenv(f"{pfx}B2_BE_CUSHION"))
+                except Exception: pass
+            if os.getenv(f"{pfx}B2_R2_TRIG"):
+                try: params["b2_r2_trig"] = Decimal(os.getenv(f"{pfx}B2_R2_TRIG"))
+                except Exception: pass
+            if os.getenv(f"{pfx}B2_R2_SL"):
+                try: params["b2_r2_sl"] = Decimal(os.getenv(f"{pfx}B2_R2_SL"))
                 except Exception: pass
             if os.getenv(f"{pfx}EMA_FAST"):
                 try: params["ema_fast"] = int(os.getenv(f"{pfx}EMA_FAST"))

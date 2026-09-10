@@ -39,6 +39,9 @@ graph TD
    - Winning leg exits at `entry_price * (1 ± 0.05)`, locking in macro expansion profits.
 5. **Indicator Gating**:
    - Only initiates double entry when Fast EMA (20) crosses Slow EMA (50) **AND** ADX(14) > 22, filtering out horizontal dead zones.
+6. **Path B Size-Flip Trap Hunter & Exhaustion Guard (Production Deployed)**:
+   - For 60m crypto pairs (BTC, ETH, SOL), the bot operates on the **Zero-Loss Pullback & Size-Flip Trap Hunter** architecture (detailed in [zero_loss_pullback_strategy.md](file:///c:/Users/x000sec/Desktop/Projects/hyper_hedge_research/zero_loss_pullback_strategy.md)).
+   - **Exhaustion Guard**: In `bybit_bot/engine.py`, Branch 2 evaluates whether price has already overshot the Apex TP target during flash crashes/pumps. If overshot, the bot bypasses the $+70\%$ market upsize to avoid selling bottom wicks or buying top wicks, immediately closing the 30% counter leg for profit (`TP_HIT_EXHAUSTION`). Normal orderly breakdowns continue to execute the full Scenario 5 size-flip.
 
 ---
 

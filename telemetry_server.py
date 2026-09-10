@@ -39,6 +39,21 @@ try:
 except ImportError:
     BybitHTTP = None
 
+# Import research & backtest replay engines
+try:
+    from research.replay_engine import ReplayEngine, CHAMPION_PROFILES
+    from research.monte_carlo import MonteCarloEngine
+    from research.optimizer import StrategyOptimizer
+    from research.dashboard_components import get_research_css, get_research_html, get_research_js
+except ImportError:
+    ReplayEngine = None
+    CHAMPION_PROFILES = {}
+    MonteCarloEngine = None
+    StrategyOptimizer = None
+    get_research_css = lambda: ""
+    get_research_html = lambda: ""
+    get_research_js = lambda: ""
+
 # In-memory candle cache: { (symbol, interval, limit): (timestamp, data) }
 CANDLE_CACHE = {}
 CANDLE_CACHE_TTL = 8.0  # seconds
@@ -542,6 +557,30 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                 self._send_html(self._render_login(error="Invalid password. Please try again."), status=401)
             return
 
+        # Protected Research API Endpoints
+        if parsed.path.startswith("/api/research/"):
+            if not self._is_authenticated():
+                self._send_json({"error": "Unauthorized", "message": "Authentication required"}, 401)
+                return
+
+            length = int(self.headers.get("Content-Length", 0))
+            raw_body = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
+            try:
+                payload = json.loads(raw_body) if raw_body else {}
+            except Exception as e:
+                self._send_json({"error": f"Invalid JSON body: {e}"}, 400)
+                return
+
+            if parsed.path == "/api/research/backtest":
+                self._handle_api_research_backtest(payload)
+                return
+            elif parsed.path == "/api/research/monte-carlo":
+                self._handle_api_research_monte_carlo(payload)
+                return
+            elif parsed.path == "/api/research/optimize":
+                self._handle_api_research_optimize(payload)
+                return
+
         self.send_error(404, "Not Found")
 
     def do_GET(self):
@@ -603,6 +642,11 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             self._handle_api_candles(qs)
         elif parsed.path == "/api/tickers":
             self._handle_api_tickers()
+        elif parsed.path == "/api/research/config":
+            self._send_json({
+                "symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "PAXGUSDT"],
+                "profiles": CHAMPION_PROFILES if CHAMPION_PROFILES else {},
+            })
         else:
             self.send_error(404, "Not Found")
 
@@ -835,6 +879,257 @@ class TelemetryHandler(BaseHTTPRequestHandler):
     def _handle_api_tickers(self):
         tickers = fetch_24h_tickers()
         self._send_json({"tickers": tickers})
+
+    def _handle_api_research_backtest(self, payload: dict):
+        if not ReplayEngine:
+            self._send_json({"error": "ReplayEngine module not loaded"}, 500)
+            return
+
+        symbol = str(payload.get("symbol", "BTCUSDT")).upper()
+        limit = int(payload.get("limit", 2000))
+        custom_params = {}
+        for k in ["d_pct", "confirm_mult", "b1_tp_mult", "b2_tp_mult", "leverage"]:
+            if k in payload:
+                try:
+                    custom_params[k] = float(payload[k])
+                except (ValueError, TypeError):
+                    pass
+
+        try:
+            candles = ReplayEngine.load_candles(symbol, limit=limit)
+            engine = ReplayEngine(initial_capital=float(payload.get("initial_capital", 1000.0)))
+            res = engine.run_backtest(symbol, candles, custom_params=custom_params if custom_params else None)
+
+            # Benchmark buy and hold curve
+            p0 = float(candles[0]["close"]) if candles else 1.0
+            benchmark_curve = []
+            stride = max(1, len(candles) // 100)
+            for c in candles[::stride]:
+                benchmark_curve.append({
+                    "time": str(c.get("datetime", "")),
+                    "price": float(c["close"]),
+                    "return_pct": round(((float(c["close"]) - p0) / p0) * 100.0, 2),
+                })
+
+            import numpy as np
+            from research.replay_engine import calc_ema
+            c_arr = np.array([float(c["close"]) for c in candles], dtype=np.float64)
+            ema9 = calc_ema(c_arr, 9)
+            ema21 = calc_ema(c_arr, 21)
+
+            price_candles = [
+                {
+                    "idx": i,
+                    "t": c.get("timestamp", 0),
+                    "time": str(c.get("datetime", "")),
+                    "o": float(c["open"]),
+                    "h": float(c["high"]),
+                    "l": float(c["low"]),
+                    "c": float(c["close"]),
+                    "ema9": round(float(ema9[i]), 2) if not np.isnan(ema9[i]) else None,
+                    "ema21": round(float(ema21[i]), 2) if not np.isnan(ema21[i]) else None,
+                }
+                for i, c in enumerate(candles)
+            ]
+
+            trades_data = [
+                {
+                    "cycle_id": t.cycle_id,
+                    "symbol": t.symbol,
+                    "direction": t.direction,
+                    "entry_time": t.entry_time,
+                    "exit_time": t.exit_time,
+                    "entry_price": t.entry_price,
+                    "exit_price": t.exit_price,
+                    "scenario": t.scenario,
+                    "gross_pnl": t.gross_pnl,
+                    "fees": t.fees,
+                    "net_pnl": t.net_pnl,
+                    "return_pct": t.return_pct,
+                    "bars_held": t.bars_held,
+                    "minutes_held": t.minutes_held,
+                    "exhaustion_guard_triggered": t.exhaustion_guard_triggered,
+                    "entry_bar_idx": t.entry_bar_idx,
+                    "exit_bar_idx": t.exit_bar_idx,
+                    "primary_exit": t.primary_exit,
+                    "counter_exit": t.counter_exit,
+                    "primary_pnl": t.primary_pnl,
+                    "counter_pnl": t.counter_pnl,
+                }
+                for t in res.trades
+            ]
+
+            resp = {
+                "symbol": res.symbol,
+                "total_trades": res.total_trades,
+                "winning_trades": res.winning_trades,
+                "breakeven_trades": res.breakeven_trades,
+                "losing_trades": res.losing_trades,
+                "win_rate": res.win_rate,
+                "shield_rate": res.shield_rate,
+                "gross_profit": res.gross_profit,
+                "gross_loss": res.gross_loss,
+                "total_fees": res.total_fees,
+                "net_profit": res.net_profit,
+                "profit_factor": res.profit_factor,
+                "max_drawdown": res.max_drawdown,
+                "max_drawdown_pct": res.max_drawdown_pct,
+                "sharpe_ratio": res.sharpe_ratio,
+                "scenario_counts": res.scenario_counts,
+                "equity_curve": res.equity_curve,
+                "equity_points": [d["equity"] for d in res.equity_curve],
+                "drawdown_curve": res.drawdown_curve,
+                "drawdown_series": [d["drawdown_pct"] for d in res.drawdown_curve],
+                "benchmark_curve": benchmark_curve,
+                "buy_hold_curve": [round(b["price"] * (1000.0 / benchmark_curve[0]["price"]), 2) for b in benchmark_curve] if benchmark_curve else [],
+                "trades": trades_data,
+                # Jesse-Grade Extended Performance Metrics
+                "long_trades": res.long_trades,
+                "long_win_rate": res.long_win_rate,
+                "long_profit": res.long_profit,
+                "short_trades": res.short_trades,
+                "short_win_rate": res.short_win_rate,
+                "short_profit": res.short_profit,
+                "avg_win": res.avg_win,
+                "avg_loss": res.avg_loss,
+                "win_loss_ratio": res.win_loss_ratio,
+                "largest_win": res.largest_win,
+                "largest_loss": res.largest_loss,
+                "expectancy_usd": res.expectancy_usd,
+                "cagr_pct": res.cagr_pct,
+                "sortino_ratio": res.sortino_ratio,
+                "calmar_ratio": res.calmar_ratio,
+                "max_consecutive_wins": res.max_consecutive_wins,
+                "max_consecutive_losses": res.max_consecutive_losses,
+                "avg_bars_held": res.avg_bars_held,
+                "max_bars_held": res.max_bars_held,
+                "min_bars_held": res.min_bars_held,
+                "candles_count": res.candles_count,
+                "price_candles": price_candles,
+            }
+            self._send_json(resp)
+        except Exception as e:
+            logger.error(f"Research backtest API error: {e}", exc_info=True)
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_api_research_monte_carlo(self, payload: dict):
+        if not MonteCarloEngine:
+            self._send_json({"error": "MonteCarloEngine module not loaded"}, 500)
+            return
+
+        trade_pnls = payload.get("trade_pnls", [])
+        if not trade_pnls:
+            symbol = payload.get("symbol", "BTCUSDT").upper()
+            bars = int(payload.get("bars", 2000))
+            if ReplayEngine:
+                try:
+                    candles = ReplayEngine.load_candles(symbol, limit=bars)
+                    engine = ReplayEngine(initial_capital=1000.0)
+                    res = engine.run_backtest(symbol, candles)
+                    trade_pnls = [t.net_pnl for t in res.trades]
+                except Exception as e:
+                    logger.error(f"Failed to auto-generate trades for MC: {e}")
+
+        if not trade_pnls:
+            self._send_json({"error": "No trade PnLs available for Monte Carlo simulation"}, 400)
+            return
+
+        iterations = int(payload.get("iterations", 5000))
+        permutations = int(payload.get("permutations", 1000))
+
+        try:
+            mc_engine = MonteCarloEngine(initial_capital=float(payload.get("initial_capital", 1000.0)))
+            mc = mc_engine.run_monte_carlo(trade_pnls, iterations=iterations)
+            rst = mc_engine.run_rst_permutation(trade_pnls, permutations=permutations)
+
+            resp = {
+                "monte_carlo": {
+                    "iterations": mc.iterations,
+                    "num_trades": mc.num_trades,
+                    "median_profit": mc.median_profit,
+                    "mean_profit": mc.mean_profit,
+                    "conf_interval_90": mc.conf_interval_90,
+                    "conf_interval_95": mc.conf_interval_95,
+                    "percentile_5": mc.percentile_5,
+                    "percentile_25": mc.percentile_25,
+                    "percentile_50": mc.percentile_50,
+                    "percentile_75": mc.percentile_75,
+                    "percentile_95": mc.percentile_95,
+                    "prob_profit": mc.prob_profit,
+                    "risk_of_ruin": mc.risk_of_ruin,
+                    "median_max_dd": mc.median_max_dd,
+                    "percentile_95_max_dd": mc.percentile_95_max_dd,
+                    "fan_chart": mc.fan_chart,
+                },
+                "rst": {
+                    "permutations": rst.permutations,
+                    "strategy_net_profit": rst.strategy_net_profit,
+                    "null_mean_profit": rst.null_mean_profit,
+                    "null_std_profit": rst.null_std_profit,
+                    "z_score": rst.z_score,
+                    "p_value": rst.p_value,
+                    "is_significant": rst.is_significant,
+                    "confidence_level_pct": rst.confidence_level_pct,
+                },
+            }
+            self._send_json(resp)
+        except Exception as e:
+            logger.error(f"Research Monte Carlo API error: {e}", exc_info=True)
+            self._send_json({"error": str(e)}, 500)
+
+    def _handle_api_research_optimize(self, payload: dict):
+        """Handle POST /api/research/optimize to run walk-forward hyperparameter optimization."""
+        if not StrategyOptimizer or not ReplayEngine:
+            self._send_json({"error": "Optimizer engine not available"}, 500)
+            return
+
+        symbol = payload.get("symbol", "BTCUSDT").upper()
+        bars = int(payload.get("bars", 2000))
+        trials = int(payload.get("trials", 25))
+        objective = payload.get("objective", "sharpe")
+        train_ratio = float(payload.get("train_ratio", 0.70))
+
+        try:
+            candles = ReplayEngine.load_candles(symbol, limit=bars)
+            optimizer = StrategyOptimizer(initial_capital=1000.0)
+            res = optimizer.run_optimization(
+                symbol=symbol,
+                candles=candles,
+                num_trials=trials,
+                train_ratio=train_ratio,
+                objective=objective
+            )
+
+            resp = {
+                "symbol": res.symbol,
+                "trials_evaluated": res.trials_evaluated,
+                "objective": res.objective,
+                "train_test_split": res.train_test_split,
+                "best_params": res.best_params,
+                "best_fitness": res.best_fitness,
+                "best_training_metrics": res.best_training_metrics,
+                "best_testing_metrics": res.best_testing_metrics,
+                "leaderboard": [
+                    {
+                        "trial": t.trial_number,
+                        "params": t.params,
+                        "training_profit": t.training_profit,
+                        "training_sharpe": t.training_sharpe,
+                        "training_win_rate": t.training_win_rate,
+                        "testing_profit": t.testing_profit,
+                        "testing_sharpe": t.testing_sharpe,
+                        "testing_win_rate": t.testing_win_rate,
+                        "testing_max_dd": t.testing_max_dd,
+                        "fitness_score": t.fitness_score,
+                        "is_overfit": t.is_overfit,
+                    }
+                    for t in res.leaderboard[:10]
+                ],
+            }
+            self._send_json(resp)
+        except Exception as e:
+            logger.error(f"Research Optimize API error: {e}", exc_info=True)
+            self._send_json({"error": str(e)}, 500)
 
     def _build_ws_frame(self, payload_bytes: bytes) -> bytes:
         """Construct an unmasked RFC 6455 WebSocket text frame (server -> client)."""
@@ -1439,6 +1734,9 @@ class TelemetryHandler(BaseHTTPRequestHandler):
     def _render_dashboard(self) -> str:
         d = self._get_live_telemetry_payload()
         status_color = d["status_color"]
+        research_css = get_research_css()
+        research_html = get_research_html()
+        research_js = get_research_js()
 
         return f"""<!DOCTYPE html>
 <html lang="en">
@@ -2050,6 +2348,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         font-size: 15px;
       }}
     }}
+    {research_css}
   </style>
 </head>
 <body>
@@ -2066,6 +2365,21 @@ class TelemetryHandler(BaseHTTPRequestHandler):
       </div>
     </header>
 
+    <!-- Main Top Navigation Tabs -->
+    <div class="view-nav-tabs">
+      <button id="btn-tab-live" class="view-tab-btn active" onclick="switchMainView('live')">
+        <span class="tab-indicator live-ind"></span>
+        <span style="font-weight:700;">Live Operations &amp; Positions</span>
+        <span class="tab-badge live-badge">BOT ACTIVE</span>
+      </button>
+      <button id="btn-tab-research" class="view-tab-btn" onclick="switchMainView('research')">
+        <span class="tab-indicator research-ind"></span>
+        <span style="font-weight:700;">Research &amp; Backtesting Suite</span>
+        <span class="tab-badge research-badge">1-MIN REPLAY &bull; MC &bull; OPTIMIZER</span>
+      </button>
+    </div>
+
+    <div id="view-live">
     <div class="stats-grid" id="stats-grid">
       {d['stats_grid_html']}
     </div>
@@ -2206,7 +2520,10 @@ class TelemetryHandler(BaseHTTPRequestHandler):
       <span style="font-size:12px; color:#64748b;">journalctl -u bybit-bot -n 80</span>
     </div>
     <div class="terminal" id="term">{d['logs']}</div>
-  </div>
+    </div> <!-- end view-live -->
+
+    {research_html}
+  </div> <!-- end container -->
 
   <script>
     // Live Real-Time WebSocket Telemetry (Zero page refresh)
@@ -2530,6 +2847,8 @@ class TelemetryHandler(BaseHTTPRequestHandler):
     // Initial scroll terminal to bottom
     const term = document.getElementById('term');
     if (term) term.scrollTop = term.scrollHeight;
+
+    {research_js}
   </script>
 </body>
 </html>"""

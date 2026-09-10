@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "hyper-hedge": {
+      "command": "python",
+      "args": ["c:/Users/x000sec/Desktop/Projects/hyper_hedge_research/mcp_server.py"]
+    }
+  }
+}

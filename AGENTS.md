@@ -25,10 +25,15 @@ Unlike naive single-directional momentum strategies that suffer catastrophic dra
    - **Branch 1: Signal Confirmed (+0.80D Expansion)**:
      - Collapse 30% counter leg at market (reduced -0.24D debt).
      - Arm 100% Primary runner with Zero-Loss SL ($P_{\text{SL}} \approx P_0 \pm 0.38D$), Stage 1 Ratchet SL at $+1.40D$ (locks $+1.00D$), Stage 2 Ratchet SL at $+2.20D$ (locks $+1.70D$), Apex TP at **$+2.80D$**.
-   - **Branch 2: Signal Trapped (-0.80D Expansion / Method A Size-Flip)**:
+   - **Branch 2: Signal Trapped (-0.80D Expansion / Method A Size-Flip & Exhaustion Guard)**:
      - Collapse 100% trapped leg at market (reduced -0.80D debt).
-     - Upsize counter leg by adding $+70\%$ notional to make it a 100% runner.
-     - Initial SL at $P_0$, Full TP dynamically configured per asset (**$+3.50D$ for BTC & SOL**, **$+3.00D$ for ETH**) with Fast True Breakeven lock (at True BE $+ 0.10D$) and Milestone 2 profit ratchet at $-2.50D$ to $-2.10D$ (locks $+0.65D$ net profit).
+     - **Flash-Crash / Flash-Pump Exhaustion Guard (Verified & Deployed)**:
+       - Evaluates if current market price has already overshot the dynamic Apex TP target ($P \le P_0 \cdot (1 - \text{b2\_tp\_mult} \cdot D)$ on dumps, or $P \ge P_0 \cdot (1 + \text{b2\_tp\_mult} \cdot D)$ on pumps).
+       - If triggered, the bot aborts the $+70\%$ upsize order to prevent selling the bottom wick of a liquidation crash or buying the top wick of a blowoff pump.
+       - Immediately closes the existing 30% counter leg for full profit (`TP_HIT_EXHAUSTION`), records the win, and safely closes the cycle.
+     - **Normal Orderly Breakdown (Scenario 5 Size-Flip)**:
+       - If price is within the normal channel ($0.80D \le |P - P_0| < \text{b2\_tp\_mult} \cdot D$), upsizes the counter leg by adding $+70\%$ notional to make it a 100% runner.
+       - Initial SL at $P_0$, Full TP dynamically configured per asset (**$+3.50D$ for BTC & SOL**, **$+3.00D$ for ETH**) with Fast True Breakeven lock (at True BE $+ 0.10D$) and Milestone 2 profit ratchet at $-2.50D$ to $-2.10D$ (locks $+0.65D$ net profit).
    - **Branch 3: Consolidation Timeout (50-Candle Window)**:
      - If neither $+0.80D$ nor $-0.80D$ is reached within 50 bars, liquidates both legs at market to recycle margin.
 

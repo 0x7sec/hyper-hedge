@@ -480,6 +480,30 @@ def render_coin_badge(symbol: str, size: int = 20) -> str:
     return f'<div style="display:inline-flex; align-items:center; gap:8px;">{icon}<span style="font-weight:700; color:#f8fafc;">{symbol}</span></div>'
 
 
+def _json_serialize_fallback(obj):
+    if isinstance(obj, (datetime,)):
+        return obj.isoformat()
+    try:
+        from decimal import Decimal
+        if isinstance(obj, Decimal):
+            return float(obj)
+    except ImportError:
+        pass
+    try:
+        import numpy as np
+        if isinstance(obj, (np.bool_,)):
+            return bool(obj)
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, (np.floating,)):
+            return float(obj)
+        if isinstance(obj, (np.ndarray,)):
+            return obj.tolist()
+    except ImportError:
+        pass
+    return str(obj)
+
+
 class TelemetryHandler(BaseHTTPRequestHandler):
     server_version = "BybitHedgeTelemetry/1.0"
 
@@ -512,13 +536,14 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         return False
 
     def _send_json(self, data: dict, status: int = 200):
-        body = json.dumps(data, indent=2).encode("utf-8")
+        body = json.dumps(data, indent=2, default=_json_serialize_fallback).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
+
 
     def _send_markdown(self, text: str, status: int = 200):
         body = text.encode("utf-8")

@@ -295,15 +295,36 @@ class BybitService:
 
                     ts_ms = int(t.get("updatedTime", 0) or 0)
                     ts_str = datetime.fromtimestamp(ts_ms / 1000).strftime("%Y-%m-%d %H:%M:%S") if ts_ms > 0 else ""
+                    side_raw = t.get("side", "")
+                    qty_val = float(t.get("closedSize", 0) or t.get("qty", 0) or 0)
+                    entry_px = float(t.get("avgEntryPrice", 0) or 0)
+                    exit_px = float(t.get("avgExitPrice", 0) or 0)
+                    open_fee = float(t.get("openFee", 0) or 0)
+                    close_fee = float(t.get("closeFee", 0) or 0)
+                    pnl_float = float(pnl)
+
+                    # Bybit closed PnL accounting: Gross - OpenFee - CloseFee - FundingFee = ClosedPnL
+                    if side_raw.lower() == "sell":
+                        gross_pnl = (exit_px - entry_px) * qty_val
+                        trade_type = "Close Long"
+                    else:
+                        gross_pnl = (entry_px - exit_px) * qty_val
+                        trade_type = "Close Short"
+                    funding_fee = gross_pnl - open_fee - close_fee - pnl_float
+
                     recent_formatted.append({
                         "timestamp": ts_str,
                         "symbol": sym,
-                        "side": t.get("side", ""),
-                        "qty": float(t.get("qty", 0)),
-                        "entry_price": float(t.get("avgEntryPrice", 0)),
-                        "exit_price": float(t.get("avgExitPrice", 0)),
-                        "closed_pnl": float(pnl),
-                        "exec_fee": float(t.get("execFee", 0)),
+                        "side": side_raw,
+                        "trade_type": trade_type,
+                        "qty": qty_val,
+                        "entry_price": entry_px,
+                        "exit_price": exit_px,
+                        "closed_pnl": pnl_float,
+                        "open_fee": open_fee,
+                        "close_fee": close_fee,
+                        "funding_fee": funding_fee,
+                        "exec_fee": open_fee + close_fee,
                         "updated_time": ts_ms,
                     })
                 return {

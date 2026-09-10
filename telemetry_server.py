@@ -92,15 +92,35 @@ def fetch_bybit_account_and_trades() -> dict:
                 pnl = float(t.get("closedPnl", 0) or 0)
                 by_sym[sym] = by_sym.get(sym, 0.0) + pnl
                 ts_ms = int(t.get("updatedTime", 0) or 0)
+                open_fee = float(t.get("openFee", 0) or 0)
+                close_fee = float(t.get("closeFee", 0) or 0)
+                side_raw = t.get("side", "")
+                qty_val = float(t.get("closedSize", 0) or t.get("qty", 0) or 0)
+                entry_px = float(t.get("avgEntryPrice", 0) or 0)
+                exit_px = float(t.get("avgExitPrice", 0) or 0)
+
+                # Accounting: Gross - OpenFee - CloseFee - FundingFee = ClosedPnL
+                if side_raw.lower() == "sell":
+                    gross_pnl = (exit_px - entry_px) * qty_val
+                    trade_type = "Close Long"
+                else:
+                    gross_pnl = (entry_px - exit_px) * qty_val
+                    trade_type = "Close Short"
+                funding_fee = gross_pnl - open_fee - close_fee - pnl
+
                 formatted.append({
                     "timestamp": datetime.fromtimestamp(ts_ms / 1000).strftime("%Y-%m-%d %H:%M:%S") if ts_ms else "",
                     "symbol": sym,
-                    "side": t.get("side", ""),
-                    "qty": float(t.get("qty", 0) or 0),
-                    "entry_price": float(t.get("avgEntryPrice", 0) or 0),
-                    "exit_price": float(t.get("avgExitPrice", 0) or 0),
+                    "side": side_raw,
+                    "trade_type": trade_type,
+                    "qty": qty_val,
+                    "entry_price": entry_px,
+                    "exit_price": exit_px,
                     "closed_pnl": pnl,
-                    "exec_fee": float(t.get("execFee", 0) or 0),
+                    "open_fee": open_fee,
+                    "close_fee": close_fee,
+                    "funding_fee": funding_fee,
+                    "exec_fee": open_fee + close_fee,
                 })
             res_data["total_realized_pnl"] = round(total_pnl, 2)
             res_data["by_symbol"] = {k: round(v, 2) for k, v in by_sym.items()}
@@ -685,8 +705,8 @@ class TelemetryHandler(BaseHTTPRequestHandler):
 
         if recent_exchange_trades:
             md.append("## Bybit Exchange Closed PnL Ledger (UTA V5)")
-            md.append("| Timestamp | Symbol | Side | Qty | Entry Price | Exit Price | Net Realized PnL |")
-            md.append("|:---:|:---:|:---:|:---:|:---:|:---:|:---:|")
+            md.append("| Timestamp | Contracts | Type | Qty | Entry Price | Exit Price | Opening Fee | Closing Fee | Funding Fee | Realized Net PnL |")
+            md.append("|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|")
             for t in recent_exchange_trades[:8]:
                 ts_str = t.get("timestamp", "")
                 if not ts_str and t.get("updated_time"):
@@ -694,7 +714,20 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                         ts_str = datetime.fromtimestamp(int(t.get("updated_time")) / 1000).strftime("%Y-%m-%d %H:%M:%S")
                     except Exception:
                         ts_str = ""
-                md.append(f"| {ts_str} | **{t.get('symbol','')}** | {t.get('side','')} | {t.get('qty','')} | ${t.get('entry_price',0):,.2f} | ${t.get('exit_price',0):,.2f} | **${t.get('closed_pnl',0):+.2f}** |")
+                trade_type = t.get("trade_type", "Close Long" if t.get("side", "").lower() == "sell" else "Close Short")
+                open_fee = float(t.get("open_fee", 0) or t.get("openFee", 0) or 0)
+                close_fee = float(t.get("close_fee", 0) or t.get("closeFee", 0) or 0)
+                pnl_val = float(t.get("closed_pnl", 0) or 0)
+                entry_px = float(t.get("entry_price", 0) or t.get("avgEntryPrice", 0) or 0)
+                exit_px = float(t.get("exit_price", 0) or t.get("avgExitPrice", 0) or 0)
+                q_val = float(t.get("qty", 0) or 0)
+                if t.get("funding_fee") is not None:
+                    funding_fee = float(t.get("funding_fee"))
+                else:
+                    gross = (exit_px - entry_px) * q_val if t.get("side", "").lower() == "sell" else (entry_px - exit_px) * q_val
+                    funding_fee = gross - open_fee - close_fee - pnl_val
+                fund_str = f"{funding_fee:+.4f}" if abs(funding_fee) >= 0.00005 else "0.0000"
+                md.append(f"| {ts_str} | **{t.get('symbol','')}** | `{trade_type}` | {q_val} | ${entry_px:,.2f} | ${exit_px:,.2f} | -${open_fee:.4f} | -${close_fee:.4f} | {fund_str} | **${pnl_val:+.4f}** |")
             md.append("")
         elif not trades:
             md.append("*No closed trades recorded yet.*")
@@ -1134,13 +1167,14 @@ class TelemetryHandler(BaseHTTPRequestHandler):
               <td style="color:{cum_col}; font-weight:600; font-family:'JetBrains Mono';">${cum_val:+.2f}</td>
             </tr>""")
 
-        # Tab 2: Exchange trades from Bybit API (WITHOUT TAKER FEE - fee is always 0)
+        # Tab 2: Exchange trades from Bybit API (With Opening Fee, Closing Fee, and Funding Fee)
         exchange_trade_rows = []
         for t in recent_exchange_trades:
             pnl_val = float(t.get("closed_pnl", 0) or 0)
             col = "#10b981" if pnl_val > 0 else ("#ef4444" if pnl_val < 0 else "#94a3b8")
             side_raw = t.get("side", "")
-            side_badge = "long" if side_raw.lower() in ["buy", "long"] else "short"
+            trade_type = t.get("trade_type", "Close Long" if side_raw.lower() == "sell" else "Close Short")
+            type_badge = "long" if "long" in trade_type.lower() else "short"
 
             ts_display = t.get("timestamp", "")
             if not ts_display and t.get("updated_time"):
@@ -1149,19 +1183,37 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                 except Exception:
                     ts_display = ""
 
+            open_fee = float(t.get("open_fee", 0) or t.get("openFee", 0) or 0)
+            close_fee = float(t.get("close_fee", 0) or t.get("closeFee", 0) or 0)
+            entry_px = float(t.get("entry_price", 0) or t.get("avgEntryPrice", 0) or 0)
+            exit_px = float(t.get("exit_price", 0) or t.get("avgExitPrice", 0) or 0)
+            qty_val = float(t.get("qty", 0) or 0)
+
+            if t.get("funding_fee") is not None:
+                funding_fee = float(t.get("funding_fee"))
+            else:
+                gross = (exit_px - entry_px) * qty_val if side_raw.lower() == "sell" else (entry_px - exit_px) * qty_val
+                funding_fee = gross - open_fee - close_fee - pnl_val
+
+            fund_col = "#34d399" if funding_fee > 0 else ("#f87171" if funding_fee < 0 else "#94a3b8")
+            fund_str = f"{funding_fee:+.4f}" if abs(funding_fee) >= 0.00005 else "0.0000"
+            qty_str = f"-{abs(qty_val)}" if "long" in trade_type.lower() else f"{abs(qty_val)}"
+
             exchange_trade_rows.append(f"""<tr>
               <td>{ts_display}</td>
               <td><b>{t.get('symbol','')}</b></td>
-              <td><span class="badge {side_badge}">{side_raw}</span></td>
-              <td><span class="badge event">Closed PnL</span></td>
-              <td style="font-family:'JetBrains Mono';">{t.get('qty','')}</td>
-              <td style="font-family:'JetBrains Mono';">${t.get('entry_price', 0):,.2f}</td>
-              <td style="font-family:'JetBrains Mono';">${t.get('exit_price', 0):,.2f}</td>
-              <td style="color:{col}; font-weight:700; font-family:'JetBrains Mono';">${pnl_val:+.2f}</td>
+              <td><span class="badge {type_badge}">{trade_type}</span></td>
+              <td style="font-family:'JetBrains Mono';">{qty_str}</td>
+              <td style="font-family:'JetBrains Mono';">${entry_px:,.2f}</td>
+              <td style="font-family:'JetBrains Mono';">${exit_px:,.2f}</td>
+              <td style="font-family:'JetBrains Mono'; color:#f87171;">-${open_fee:.4f}</td>
+              <td style="font-family:'JetBrains Mono'; color:#f87171;">-${close_fee:.4f}</td>
+              <td style="font-family:'JetBrains Mono'; color:{fund_col};">{fund_str}</td>
+              <td style="color:{col}; font-weight:700; font-family:'JetBrains Mono';">${pnl_val:+.4f}</td>
             </tr>""")
 
         csv_trades_html = "\n".join(trade_rows) if trade_rows else '<tr><td colspan="11" style="text-align:center; padding:24px; color:#64748b;">No internal bot events recorded in bybit_trades.csv yet for the current session.<br><small style="color:#475569;">Switch to the <b>Bybit Exchange Closed P&amp;L</b> tab to see official Bybit closed position executions.</small></td></tr>'
-        exchange_trades_html = "\n".join(exchange_trade_rows) if exchange_trade_rows else '<tr><td colspan="8" style="text-align:center; padding:24px; color:#64748b;">No closed position fills retrieved from Bybit UTA API yet.</td></tr>'
+        exchange_trades_html = "\n".join(exchange_trade_rows) if exchange_trade_rows else '<tr><td colspan="10" style="text-align:center; padding:24px; color:#64748b;">No closed position fills retrieved from Bybit UTA API yet.</td></tr>'
 
         # Symbol breakdown badges
         badges = []
@@ -1836,12 +1888,14 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         <thead>
           <tr>
             <th>Timestamp</th>
-            <th>Symbol</th>
-            <th>Side</th>
-            <th>Exec Type</th>
+            <th>Contracts</th>
+            <th>Trade Type</th>
             <th>Qty</th>
-            <th>Avg Entry Price</th>
-            <th>Avg Exit Price</th>
+            <th>Entry Price</th>
+            <th>Exit Price</th>
+            <th>Opening Fee</th>
+            <th>Closing Fee</th>
+            <th>Funding Fee</th>
             <th>Realized Net PnL</th>
           </tr>
         </thead>

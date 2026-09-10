@@ -364,7 +364,14 @@ def read_bot_state() -> dict:
     if os.path.exists(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+                if data and "session_start_iso" in data:
+                    try:
+                        start_dt = datetime.fromisoformat(data["session_start_iso"])
+                        data["uptime_seconds"] = max(0, int((datetime.now() - start_dt).total_seconds()))
+                    except Exception:
+                        pass
+                return data
         except Exception:
             pass
     return {}
@@ -790,7 +797,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
     def _handle_api_logs(self, qs: dict):
         lines = int(qs.get("lines", [100])[0])
         err_only = qs.get("errors", ["0"])[0] in ["1", "true", "yes"]
-        raw_logs = get_systemd_logs(lines=min(lines, 500), errors_only=err_only)
+        raw_logs = get_systemd_logs(lines=min(lines, 2500), errors_only=err_only)
         self._send_json({"lines": lines, "errors_only": err_only, "logs": raw_logs.splitlines()})
 
     def _handle_api_trades(self, qs: dict):
@@ -1005,23 +1012,31 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                 l_tp_buf = (l_tp - px) if (px and l_tp) else 0.0
                 l_tp_buf_pct = ((l_tp - px) / px * 100) if (px and l_tp and px > 0) else 0.0
 
-                l_sl_tag = f'<span class="target-tag sl" title="Trailing Stop Loss">🛡️ SL: ${l_sl:,.2f} <span style="font-size:9px; opacity:0.85;">(-${abs(l_sl_buf):,.1f})</span></span>' if l_sl > 0 else '<span>SL: ---</span>'
-                l_tp_tag = f'<span class="target-tag tp" title="Apex Take Profit">🎯 TP: ${l_tp:,.2f} <span style="font-size:9px; opacity:0.85;">(+${abs(l_tp_buf):,.1f})</span></span>' if l_tp > 0 else '<span>TP: ---</span>'
+                if p_phase == "INCUBATION":
+                    l_sl_tag = '<div class="target-tag event" title="Stop Loss arms at Zero-Loss upon ±0.80D breakout"><span>🛡️ SL</span><span style="font-size:9px; opacity:0.85;">Arms @ ±0.80D</span></div>'
+                    l_tp_tag = f'<div class="target-tag event" title="Apex Take Profit target"><span>🎯 TP</span><span style="font-size:9px; opacity:0.85;">Target ${l_tp:,.2f}</span></div>' if l_tp > 0 else '<div></div>'
+                    table_sl = '<span class="badge event" style="font-size:11px;">Pending ±0.80D</span><div style="font-size:10px; color:#94a3b8; margin-top:2px;">No stops in incubation</div>'
+                    table_tp = f'<span class="target-tag tp" style="opacity:0.85;">🎯 Target ${l_tp:,.2f}</span><div style="font-size:10px; color:#94a3b8; margin-top:2px;">Arms on confirmation</div>' if l_tp > 0 else '---'
+                else:
+                    l_sl_tag = f'<div class="target-tag sl" title="Trailing Stop Loss"><span>🛡️ SL: ${l_sl:,.2f}</span><span style="font-size:9px; opacity:0.85;">(-${abs(l_sl_buf):,.1f})</span></div>' if l_sl > 0 else '<div class="target-tag event"><span>SL: ---</span></div>'
+                    l_tp_tag = f'<div class="target-tag tp" title="Apex Take Profit"><span>🎯 TP: ${l_tp:,.2f}</span><span style="font-size:9px; opacity:0.85;">(+${abs(l_tp_buf):,.1f})</span></div>' if l_tp > 0 else '<div class="target-tag event"><span>TP: ---</span></div>'
+                    table_sl = f'<span class="target-tag sl">🛡️ ${l_sl:,.2f}</span><div style="font-size:10px; color:#ef4444; margin-top:2px;">Buffer: ${abs(l_sl_buf):,.2f} ({abs(l_sl_buf_pct):.2f}%)</div>' if (l_sl > 0 and px) else (f'<span class="target-tag sl">🛡️ ${l_sl:,.2f}</span>' if l_sl > 0 else '---')
+                    table_tp = f'<span class="target-tag tp">🎯 ${l_tp:,.2f}</span><div style="font-size:10px; color:#10b981; margin-top:2px;">Target: ${abs(l_tp_buf):,.2f} ({abs(l_tp_buf_pct):.2f}%)</div>' if (l_tp > 0 and px) else (f'<span class="target-tag tp">🎯 ${l_tp:,.2f}</span>' if l_tp > 0 else '---')
 
                 long_html = f"""<div class="leg-box long" style="border-left: 3px solid #10b981;">
-                  <div class="leg-header">
-                    <div>
-                      <span class="badge long">LONG {l_size}</span>
-                      <span class="badge {'primary' if l_role=='PRIMARY' else 'counter'}" style="font-size:9px; padding:1px 5px;">{l_role}</span>
+                  <div class="leg-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; gap:4px;">
+                    <div style="display:flex; align-items:center; gap:4px; min-width:0;">
+                      <span class="badge long" style="white-space:nowrap;">LONG {l_size}</span>
+                      <span class="badge {'primary' if l_role=='PRIMARY' else 'counter'}" style="font-size:9px; padding:1px 5px; white-space:nowrap;">{l_role}</span>
                     </div>
-                    <b style="color:{lcol}">${lpnl:+.2f} ({l_pnl_pct:+.2f}%)</b>
+                    <b style="color:{lcol}; font-size:11px; white-space:nowrap; margin-left:auto;">${lpnl:+.2f} ({l_pnl_pct:+.2f}%)</b>
                   </div>
                   <div class="leg-body">
-                    <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-                      <span>Entry: <b>${l_entry:,.2f}</b></span>
-                      <span>Peak: <b>${l_peak:,.2f}</b></span>
+                    <div style="display:flex; justify-content:space-between; font-size:10px; margin-bottom:4px; color:#94a3b8;">
+                      <span>Entry: <b style="color:#e2e8f0;">${l_entry:,.2f}</b></span>
+                      <span>Peak: <b style="color:#e2e8f0;">${l_peak:,.2f}</b></span>
                     </div>
-                    <div style="display:flex; justify-content:space-between; gap:6px; margin-top:4px;">
+                    <div style="display:flex; flex-direction:column; gap:4px;">
                       {l_sl_tag}
                       {l_tp_tag}
                     </div>
@@ -1029,8 +1044,6 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                 </div>"""
 
                 l_notional_str = f"(${l_size * px:,.1f})" if (px and l_size) else ""
-                table_sl = f'<span class="target-tag sl">🛡️ ${l_sl:,.2f}</span><div style="font-size:10px; color:#ef4444; margin-top:2px;">Buffer: ${abs(l_sl_buf):,.2f} ({abs(l_sl_buf_pct):.2f}%)</div>' if (l_sl > 0 and px) else (f'<span class="target-tag sl">🛡️ ${l_sl:,.2f}</span>' if l_sl > 0 else '---')
-                table_tp = f'<span class="target-tag tp">🎯 ${l_tp:,.2f}</span><div style="font-size:10px; color:#10b981; margin-top:2px;">Target: ${abs(l_tp_buf):,.2f} ({abs(l_tp_buf_pct):.2f}%)</div>' if (l_tp > 0 and px) else (f'<span class="target-tag tp">🎯 ${l_tp:,.2f}</span>' if l_tp > 0 else '---')
 
                 active_positions_rows.append(f"""<tr>
                   <td>{render_coin_badge(sym)}</td>
@@ -1061,23 +1074,31 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                 s_tp_buf = (px - s_tp) if (px and s_tp) else 0.0
                 s_tp_buf_pct = ((px - s_tp) / px * 100) if (px and s_tp and px > 0) else 0.0
 
-                s_sl_tag = f'<span class="target-tag sl" title="Trailing Stop Loss">🛡️ SL: ${s_sl:,.2f} <span style="font-size:9px; opacity:0.85;">(+${abs(s_sl_buf):,.1f})</span></span>' if s_sl > 0 else '<span>SL: ---</span>'
-                s_tp_tag = f'<span class="target-tag tp" title="Apex Take Profit">🎯 TP: ${s_tp:,.2f} <span style="font-size:9px; opacity:0.85;">(-${abs(s_tp_buf):,.1f})</span></span>' if s_tp > 0 else '<span>TP: ---</span>'
+                if p_phase == "INCUBATION":
+                    s_sl_tag = '<div class="target-tag event" title="Stop Loss arms upon ±0.80D breakout"><span>🛡️ SL</span><span style="font-size:9px; opacity:0.85;">Arms @ ±0.80D</span></div>'
+                    s_tp_tag = f'<div class="target-tag event" title="Apex Take Profit target"><span>🎯 TP</span><span style="font-size:9px; opacity:0.85;">Target ${s_tp:,.2f}</span></div>' if s_tp > 0 else '<div></div>'
+                    table_sl = '<span class="badge event" style="font-size:11px;">Pending ±0.80D</span><div style="font-size:10px; color:#94a3b8; margin-top:2px;">No stops in incubation</div>'
+                    table_tp = f'<span class="target-tag tp" style="opacity:0.85;">🎯 Target ${s_tp:,.2f}</span><div style="font-size:10px; color:#94a3b8; margin-top:2px;">Arms on confirmation</div>' if s_tp > 0 else '---'
+                else:
+                    s_sl_tag = f'<div class="target-tag sl" title="Trailing Stop Loss"><span>🛡️ SL: ${s_sl:,.2f}</span><span style="font-size:9px; opacity:0.85;">(+${abs(s_sl_buf):,.1f})</span></div>' if s_sl > 0 else '<div class="target-tag event"><span>SL: ---</span></div>'
+                    s_tp_tag = f'<div class="target-tag tp" title="Apex Take Profit"><span>🎯 TP: ${s_tp:,.2f}</span><span style="font-size:9px; opacity:0.85;">(-${abs(s_tp_buf):,.1f})</span></div>' if s_tp > 0 else '<div class="target-tag event"><span>TP: ---</span></div>'
+                    table_sl = f'<span class="target-tag sl">🛡️ ${s_sl:,.2f}</span><div style="font-size:10px; color:#ef4444; margin-top:2px;">Buffer: ${abs(s_sl_buf):,.2f} ({abs(s_sl_buf_pct):.2f}%)</div>' if (s_sl > 0 and px) else (f'<span class="target-tag sl">🛡️ ${s_sl:,.2f}</span>' if s_sl > 0 else '---')
+                    table_tp = f'<span class="target-tag tp">🎯 ${s_tp:,.2f}</span><div style="font-size:10px; color:#10b981; margin-top:2px;">Target: ${abs(s_tp_buf):,.2f} ({abs(s_tp_buf_pct):.2f}%)</div>' if (s_tp > 0 and px) else (f'<span class="target-tag tp">🎯 ${s_tp:,.2f}</span>' if s_tp > 0 else '---')
 
                 short_html = f"""<div class="leg-box short" style="border-left: 3px solid #ef4444;">
-                  <div class="leg-header">
-                    <div>
+                  <div class="leg-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; gap:4px;">
+                    <div style="display:flex; align-items:center; gap:4px; min-width:0;">
                       <span class="badge short">SHORT {s_size}</span>
-                      <span class="badge {'primary' if s_role=='PRIMARY' else 'counter'}" style="font-size:9px; padding:1px 5px;">{s_role}</span>
+                      <span class="badge {'primary' if s_role=='PRIMARY' else 'counter'}" style="font-size:9px; padding:1px 5px; white-space:nowrap;">{s_role}</span>
                     </div>
-                    <b style="color:{scol}">${spnl:+.2f} ({s_pnl_pct:+.2f}%)</b>
+                    <b style="color:{scol}; font-size:11px; white-space:nowrap; margin-left:auto;">${spnl:+.2f} ({s_pnl_pct:+.2f}%)</b>
                   </div>
                   <div class="leg-body">
-                    <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-                      <span>Entry: <b>${s_entry:,.2f}</b></span>
-                      <span>Trough: <b>${s_trough:,.2f}</b></span>
+                    <div style="display:flex; justify-content:space-between; font-size:10px; margin-bottom:4px; color:#94a3b8;">
+                      <span>Entry: <b style="color:#e2e8f0;">${s_entry:,.2f}</b></span>
+                      <span>Trough: <b style="color:#e2e8f0;">${s_trough:,.2f}</b></span>
                     </div>
-                    <div style="display:flex; justify-content:space-between; gap:6px; margin-top:4px;">
+                    <div style="display:flex; flex-direction:column; gap:4px;">
                       {s_sl_tag}
                       {s_tp_tag}
                     </div>
@@ -1086,8 +1107,6 @@ class TelemetryHandler(BaseHTTPRequestHandler):
 
                 # Add to active positions table
                 s_notional_str = f"(${s_size * px:,.1f})" if (px and s_size) else ""
-                table_sl = f'<span class="target-tag sl">🛡️ ${s_sl:,.2f}</span><div style="font-size:10px; color:#ef4444; margin-top:2px;">Buffer: ${abs(s_sl_buf):,.2f} ({abs(s_sl_buf_pct):.2f}%)</div>' if (s_sl > 0 and px) else (f'<span class="target-tag sl">🛡️ ${s_sl:,.2f}</span>' if s_sl > 0 else '---')
-                table_tp = f'<span class="target-tag tp">🎯 ${s_tp:,.2f}</span><div style="font-size:10px; color:#10b981; margin-top:2px;">Target: ${abs(s_tp_buf):,.2f} ({abs(s_tp_buf_pct):.2f}%)</div>' if (s_tp > 0 and px) else (f'<span class="target-tag tp">🎯 ${s_tp:,.2f}</span>' if s_tp > 0 else '---')
 
                 active_positions_rows.append(f"""<tr>
                   <td>{render_coin_badge(sym)}</td>
@@ -1539,6 +1558,8 @@ class TelemetryHandler(BaseHTTPRequestHandler):
       border-radius: 12px;
       padding: 18px;
       box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2), 0 2px 4px -2px rgba(0, 0, 0, 0.2);
+      min-width: 0;
+      overflow: hidden;
     }}
     .stat-title {{
       font-size: 12px;
@@ -1579,7 +1600,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
     }}
     .markets-grid {{
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
       gap: 16px;
       margin-bottom: 24px;
     }}
@@ -1587,6 +1608,8 @@ class TelemetryHandler(BaseHTTPRequestHandler):
       display: flex;
       flex-direction: column;
       gap: 12px;
+      min-width: 0;
+      overflow: hidden;
     }}
     .market-header {{
       display: flex;
@@ -1640,14 +1663,18 @@ class TelemetryHandler(BaseHTTPRequestHandler):
     .legs-grid {{
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 10px;
+      gap: 8px;
+      min-width: 0;
     }}
     .leg-box {{
-      padding: 10px 12px;
+      padding: 8px 10px;
       border-radius: 8px;
-      font-size: 12px;
+      font-size: 11px;
       background: #151f32;
       border: 1px solid #243248;
+      min-width: 0;
+      overflow: hidden;
+      box-sizing: border-box;
     }}
     .leg-box.empty {{
       color: #64748b;
@@ -1739,14 +1766,20 @@ class TelemetryHandler(BaseHTTPRequestHandler):
       border: 1px solid rgba(148, 163, 184, 0.2);
     }}
     .target-tag {{
-      display: inline-flex;
+      display: flex;
       align-items: center;
+      justify-content: space-between;
       gap: 4px;
       font-family: 'JetBrains Mono', monospace;
-      font-size: 11px;
+      font-size: 10px;
       font-weight: 600;
-      padding: 2px 7px;
+      padding: 3px 8px;
       border-radius: 4px;
+      box-sizing: border-box;
+      width: 100%;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }}
     .target-tag.sl {{
       background: rgba(239, 68, 68, 0.12);
@@ -1757,6 +1790,11 @@ class TelemetryHandler(BaseHTTPRequestHandler):
       background: rgba(16, 185, 129, 0.12);
       color: #34d399;
       border: 1px solid rgba(16, 185, 129, 0.25);
+    }}
+    .target-tag.event {{
+      background: rgba(148, 163, 184, 0.12);
+      color: #94a3b8;
+      border: 1px solid rgba(148, 163, 184, 0.25);
     }}
     .trade-tabs {{
       display: flex;

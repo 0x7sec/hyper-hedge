@@ -12,6 +12,7 @@ import time
 import json
 import csv
 import logging
+import threading
 from datetime import datetime
 from decimal import Decimal
 from dataclasses import dataclass
@@ -81,7 +82,24 @@ class BybitTradingEngine:
         }
 
         self.running = False
+        self._lock = threading.Lock()
+
+        # Persistent session start across process restarts & service reloads
         self.session_start = datetime.now()
+        state_file = os.path.join(os.path.dirname(__file__), "..", "bot_state.json")
+        if os.path.exists(state_file):
+            try:
+                with open(state_file, "r", encoding="utf-8") as f:
+                    old_state = json.load(f)
+                    old_start_str = old_state.get("session_start_iso")
+                    if old_start_str:
+                        old_dt = datetime.fromisoformat(old_start_str)
+                        # Retain start time if within reasonable range (e.g. within last 30 days)
+                        if 0 <= (datetime.now() - old_dt).total_seconds() < 30 * 86400:
+                            self.session_start = old_dt
+            except Exception:
+                pass
+
         self.total_cycles_completed = 0
         self.scan_count = 0
         self.ws: Optional[WebSocket] = None
@@ -242,9 +260,11 @@ class BybitTradingEngine:
         pair.latest_price = price
         pair.last_tick_time = now
 
-        # Process trailing stop & TP if pair is active
+        # Process trailing stop & TP if pair is active (thread-safe)
         if pair.status == "ACTIVE":
-            self._process_pair_tick(pair, price)
+            with self._lock:
+                if pair.status == "ACTIVE":
+                    self._process_pair_tick(pair, price)
 
     # ==========================================================================
     # CRASH-RESTART RECONCILIATION
@@ -353,25 +373,30 @@ class BybitTradingEngine:
         last_scan_time = time.time()
 
         while self.running:
-            now = time.time()
+            try:
+                now = time.time()
 
-            # -- 0. Monitor WebSocket connection health -----------------------
-            self._check_websocket_health()
+                # -- 0. Monitor WebSocket connection health -----------------------
+                self._check_websocket_health()
 
-            # -- 1. Check max cycles limit ------------------------------------
-            if self.config.max_cycles > 0 and self.total_cycles_completed >= self.config.max_cycles:
-                console.print(f"\n[bold cyan]Max cycles ({self.config.max_cycles}) completed. Stopping.[/bold cyan]")
-                break
+                # -- 1. Check max cycles limit (only stop in dry-run simulation mode)
+                if self.config.dry_run and self.config.max_cycles > 0 and self.total_cycles_completed >= self.config.max_cycles:
+                    console.print(f"\n[bold cyan]Max cycles ({self.config.max_cycles}) completed in dry-run mode. Stopping.[/bold cyan]")
+                    break
 
-            # -- 2. Scan for entry signals across idle pairs ------------------
-            if now - last_scan_time >= self.config.poll_interval:
-                last_scan_time = now
-                self._scan_all_pairs()
+                # -- 2. Scan for entry signals across idle pairs ------------------
+                if now - last_scan_time >= self.config.poll_interval:
+                    last_scan_time = now
+                    with self._lock:
+                        self._scan_all_pairs()
 
-            # -- 3. Periodic REST reconciliation (every 5 seconds) -----------
-            if not self.config.dry_run and now - last_reconcile_time >= 5.0:
-                last_reconcile_time = now
-                self._reconcile_active_pairs_with_exchange()
+                # -- 3. Periodic REST reconciliation (every 5 seconds) -----------
+                if not self.config.dry_run and now - last_reconcile_time >= 5.0:
+                    last_reconcile_time = now
+                    self._reconcile_active_pairs_with_exchange()
+
+            except Exception as e:
+                logger.error(f"Unexpected exception in trading engine main loop: {e}", exc_info=True)
 
             time.sleep(0.5)
 
@@ -411,6 +436,10 @@ class BybitTradingEngine:
                 # CRITICAL: Always process trailing stop / branch triggers on latest price!
                 if px > Decimal("0"):
                     self._process_pair_tick(pair, px)
+
+                # If pair cycle closed during this tick, do not continue processing as active
+                if pair.status != "ACTIVE":
+                    continue
 
                 # Check for candle timeout if in incubation
                 if pair.phase == "INCUBATION" and pair.entry_ts > 0:
@@ -644,6 +673,7 @@ class BybitTradingEngine:
 
             state = {
                 "timestamp": datetime.now().isoformat(),
+                "session_start_iso": self.session_start.isoformat(),
                 "uptime_seconds": int((datetime.now() - self.session_start).total_seconds()),
                 "total_cycles_completed": self.total_cycles_completed,
                 "scan_count": self.scan_count,
@@ -789,6 +819,8 @@ class BybitTradingEngine:
 
     def _process_pair_tick(self, pair: PairState, price: Decimal) -> None:
         """Route tick to Path B asymmetric engine or legacy symmetric trailing stop."""
+        if pair.status != "ACTIVE":
+            return
         pair.latest_price = price
         if pair.cfg.asymmetric:
             self._process_path_b_tick(pair, price)
@@ -878,6 +910,21 @@ class BybitTradingEngine:
                     tp_level = entry_px * (Decimal("1") - pair.cfg.b2_tp_mult * d_val)
                     curr_sl = entry_px  # Initial SL placed at initial entry P0
 
+                    # EXHAUSTION GUARD: If price already plunged to or below the B2 TP target,
+                    # do NOT size-flip by selling the bottom wick! Harvest profit on existing 30% short and end cycle.
+                    if price <= tp_level:
+                        if pair.short_leg and pair.short_leg.status == "ACTIVE":
+                            self.service.close_position(2, pair.short_leg.size, symbol=sym)
+                            pair.short_leg.status = "CLOSED_TP"
+                            pair.short_leg.exit_price = price
+                            self._csv_event(pair, pair.short_leg, "TP_HIT_EXHAUSTION", price)
+                        console.print(
+                            f"\n[bold green]>>> [{sym}] BRANCH 2 HIT & EXHAUSTION TP REACHED @ {price:.2f} (<= {tp_level:.2f})! "
+                            f"Harvested Short profit without size-flipping into bottom wick. <<<[/bold green]"
+                        )
+                        self._close_pair_cycle(pair)
+                        return
+
                     if pair.short_leg and pair.short_leg.status == "ACTIVE":
                         pair.short_leg.trailing_sl = curr_sl
                         pair.short_leg.tp_target = tp_level
@@ -963,6 +1010,21 @@ class BybitTradingEngine:
                     true_be = blend_px + (total_drain / base_qty)
                     tp_level = entry_px * (Decimal("1") + pair.cfg.b2_tp_mult * d_val)
                     curr_sl = entry_px  # Initial SL placed at initial entry P0
+
+                    # EXHAUSTION GUARD: If price already pumped to or above the B2 TP target,
+                    # do NOT size-flip by buying the top wick! Harvest profit on existing 30% long and end cycle.
+                    if price >= tp_level:
+                        if pair.long_leg and pair.long_leg.status == "ACTIVE":
+                            self.service.close_position(1, pair.long_leg.size, symbol=sym)
+                            pair.long_leg.status = "CLOSED_TP"
+                            pair.long_leg.exit_price = price
+                            self._csv_event(pair, pair.long_leg, "TP_HIT_EXHAUSTION", price)
+                        console.print(
+                            f"\n[bold green]>>> [{sym}] BRANCH 2 HIT & EXHAUSTION TP REACHED @ {price:.2f} (>= {tp_level:.2f})! "
+                            f"Harvested Long profit without size-flipping into top wick. <<<[/bold green]"
+                        )
+                        self._close_pair_cycle(pair)
+                        return
 
                     if pair.long_leg and pair.long_leg.status == "ACTIVE":
                         pair.long_leg.trailing_sl = curr_sl
@@ -1245,6 +1307,8 @@ class BybitTradingEngine:
 
     def _close_pair_cycle(self, pair: PairState) -> None:
         """Record completed cycle for a pair, update cumulative PnL, set cooldown."""
+        if pair.status not in ("ACTIVE", "INCUBATION", "RUNNER_B1", "RUNNER_B2"):
+            return
         final_px = pair.latest_price or Decimal("0")
         l_pnl = pair.long_leg.pnl(final_px)[0] if pair.long_leg else Decimal("0")
         s_pnl = pair.short_leg.pnl(final_px)[0] if pair.short_leg else Decimal("0")
@@ -1298,80 +1362,84 @@ class BybitTradingEngine:
                 idx = int(p.get("positionIdx", 0))
                 active_by_sym.setdefault(sym, set()).add(idx)
 
-            for sym, pair in self.pairs.items():
-                if pair.status != "ACTIVE":
-                    continue
+            with self._lock:
+                for sym, pair in self.pairs.items():
+                    if pair.status != "ACTIVE":
+                        continue
 
-                active_indices = active_by_sym.get(sym, set())
-                px = self._get_fresh_price(pair)
-                if px > Decimal("0"):
-                    self._process_pair_tick(pair, px)
+                    active_indices = active_by_sym.get(sym, set())
+                    px = self._get_fresh_price(pair)
+                    if px > Decimal("0"):
+                        self._process_pair_tick(pair, px)
 
-                if pair.long_leg and pair.long_leg.status == "ACTIVE" and 1 not in active_indices:
-                    logger.info(f"[{sym}] Exchange confirms LONG closed.")
-                    record = self.service.get_last_closed_pnl(sym)
-                    if record:
-                        exit_px = Decimal(str(record.get("avgExitPrice") or px))
-                        realized = Decimal(str(record.get("closedPnl") or "0"))
-                        pair.long_leg.exit_price = exit_px
-                        pair.long_leg.realized_pnl = realized
-                        pair.long_leg.status = "CLOSED_TP" if realized >= Decimal("0") else "CLOSED_SL"
-                        logger.info(f"[{sym}] LONG verified: {pair.long_leg.status} @ {exit_px} | PnL: ${realized:+.2f}")
-                    else:
-                        if px >= pair.long_leg.tp_target * Decimal("0.999"):
-                            pair.long_leg.status = "CLOSED_TP"
-                            pair.long_leg.exit_price = pair.long_leg.tp_target
+                    if pair.status != "ACTIVE":
+                        continue
+
+                    if pair.long_leg and pair.long_leg.status == "ACTIVE" and 1 not in active_indices:
+                        logger.info(f"[{sym}] Exchange confirms LONG closed.")
+                        record = self.service.get_last_closed_pnl(sym)
+                        if record:
+                            exit_px = Decimal(str(record.get("avgExitPrice") or px))
+                            realized = Decimal(str(record.get("closedPnl") or "0"))
+                            pair.long_leg.exit_price = exit_px
+                            pair.long_leg.realized_pnl = realized
+                            pair.long_leg.status = "CLOSED_TP" if realized >= Decimal("0") else "CLOSED_SL"
+                            logger.info(f"[{sym}] LONG verified: {pair.long_leg.status} @ {exit_px} | PnL: ${realized:+.2f}")
                         else:
-                            pair.long_leg.status = "CLOSED_SL"
-                            pair.long_leg.exit_price = pair.long_leg.trailing_sl
+                            if px >= pair.long_leg.tp_target * Decimal("0.999"):
+                                pair.long_leg.status = "CLOSED_TP"
+                                pair.long_leg.exit_price = pair.long_leg.tp_target
+                            else:
+                                pair.long_leg.status = "CLOSED_SL"
+                                pair.long_leg.exit_price = pair.long_leg.trailing_sl
 
-                    self._csv_event(pair, pair.long_leg, pair.long_leg.status, pair.long_leg.exit_price)
+                        self._csv_event(pair, pair.long_leg, pair.long_leg.status, pair.long_leg.exit_price)
 
-                    if pair.long_leg.status == "CLOSED_TP":
-                        # Long took profit! Immediately close counter Short to secure net gain and avoid 6% trend loss
-                        if pair.short_leg and pair.short_leg.status == "ACTIVE":
-                            logger.info(f"[{sym}] LONG hit TP -> Closed counter SHORT immediately to secure net gains.")
-                            self.service.close_position(2, pair.short_leg.size, symbol=sym)
-                    else:
-                        if not pair.cfg.asymmetric:
-                            self._apply_be_lock_short(pair, px)
-
-                if pair.short_leg and pair.short_leg.status == "ACTIVE" and 2 not in active_indices:
-                    logger.info(f"[{sym}] Exchange confirms SHORT closed.")
-                    record = self.service.get_last_closed_pnl(sym)
-                    if record:
-                        exit_px = Decimal(str(record.get("avgExitPrice") or px))
-                        realized = Decimal(str(record.get("closedPnl") or "0"))
-                        pair.short_leg.exit_price = exit_px
-                        pair.short_leg.realized_pnl = realized
-                        pair.short_leg.status = "CLOSED_TP" if realized >= Decimal("0") else "CLOSED_SL"
-                        logger.info(f"[{sym}] SHORT verified: {pair.short_leg.status} @ {exit_px} | PnL: ${realized:+.2f}")
-                    else:
-                        if px <= pair.short_leg.tp_target * Decimal("1.001"):
-                            pair.short_leg.status = "CLOSED_TP"
-                            pair.short_leg.exit_price = pair.short_leg.tp_target
+                        if pair.long_leg.status == "CLOSED_TP":
+                            # Long took profit! Immediately close counter Short to secure net gain and avoid 6% trend loss
+                            if pair.short_leg and pair.short_leg.status == "ACTIVE":
+                                logger.info(f"[{sym}] LONG hit TP -> Closed counter SHORT immediately to secure net gains.")
+                                self.service.close_position(2, pair.short_leg.size, symbol=sym)
                         else:
-                            pair.short_leg.status = "CLOSED_SL"
-                            pair.short_leg.exit_price = pair.short_leg.trailing_sl
+                            if not pair.cfg.asymmetric:
+                                self._apply_be_lock_short(pair, px)
 
-                    self._csv_event(pair, pair.short_leg, pair.short_leg.status, pair.short_leg.exit_price)
+                    if pair.short_leg and pair.short_leg.status == "ACTIVE" and 2 not in active_indices:
+                        logger.info(f"[{sym}] Exchange confirms SHORT closed.")
+                        record = self.service.get_last_closed_pnl(sym)
+                        if record:
+                            exit_px = Decimal(str(record.get("avgExitPrice") or px))
+                            realized = Decimal(str(record.get("closedPnl") or "0"))
+                            pair.short_leg.exit_price = exit_px
+                            pair.short_leg.realized_pnl = realized
+                            pair.short_leg.status = "CLOSED_TP" if realized >= Decimal("0") else "CLOSED_SL"
+                            logger.info(f"[{sym}] SHORT verified: {pair.short_leg.status} @ {exit_px} | PnL: ${realized:+.2f}")
+                        else:
+                            if px <= pair.short_leg.tp_target * Decimal("1.001"):
+                                pair.short_leg.status = "CLOSED_TP"
+                                pair.short_leg.exit_price = pair.short_leg.tp_target
+                            else:
+                                pair.short_leg.status = "CLOSED_SL"
+                                pair.short_leg.exit_price = pair.short_leg.trailing_sl
 
-                    if pair.short_leg.status == "CLOSED_TP":
-                        # Short took profit! Immediately close counter Long to secure net gain and avoid 6% trend loss
-                        if pair.long_leg and pair.long_leg.status == "ACTIVE":
-                            logger.info(f"[{sym}] SHORT hit TP -> Closed counter LONG immediately to secure net gains.")
-                            self.service.close_position(1, pair.long_leg.size, symbol=sym)
-                    else:
-                        if not pair.cfg.asymmetric:
-                            self._apply_be_lock_long(pair, px)
+                        self._csv_event(pair, pair.short_leg, pair.short_leg.status, pair.short_leg.exit_price)
 
-                # Check if cycle ended
-                l_done = pair.long_leg is None or pair.long_leg.status != "ACTIVE"
-                s_done = pair.short_leg is None or pair.short_leg.status != "ACTIVE"
-                if l_done and s_done:
-                    self._close_pair_cycle(pair)
+                        if pair.short_leg.status == "CLOSED_TP":
+                            # Short took profit! Immediately close counter Long to secure net gain and avoid 6% trend loss
+                            if pair.long_leg and pair.long_leg.status == "ACTIVE":
+                                logger.info(f"[{sym}] SHORT hit TP -> Closed counter LONG immediately to secure net gains.")
+                                self.service.close_position(1, pair.long_leg.size, symbol=sym)
+                        else:
+                            if not pair.cfg.asymmetric:
+                                self._apply_be_lock_long(pair, px)
 
-            self._dump_state_json()
+                    # Check if cycle ended
+                    l_done = pair.long_leg is None or pair.long_leg.status != "ACTIVE"
+                    s_done = pair.short_leg is None or pair.short_leg.status != "ACTIVE"
+                    if l_done and s_done and pair.status == "ACTIVE":
+                        self._close_pair_cycle(pair)
+
+                self._dump_state_json()
         except Exception as e:
             logger.debug(f"REST reconciliation skipped: {e}")
 

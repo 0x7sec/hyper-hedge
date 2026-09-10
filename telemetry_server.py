@@ -431,19 +431,24 @@ def format_bybit_fee(fee_val: float) -> str:
     return f"{s} USDT"
 
 
-def render_coin_badge(symbol: str) -> str:
-    """Render coin icon and bold symbol badge matching Bybit table Contracts column."""
+def get_coin_icon(symbol: str, size: int = 20) -> str:
+    """Return crisp inline SVG coin icon for BTC, ETH, SOL, XAU or fallback."""
     s = symbol.upper()
     if "BTC" in s:
-        icon = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;"><circle cx="12" cy="12" r="11" fill="#f7931a"/><path d="M15.5 10.5c.3-1.5-.9-2.3-2.5-2.8l.5-2-1.2-.3-.5 2c-.3-.1-.7-.2-1-.2l.5-2-1.2-.3-.5 2-2.5-.6-.4 1.4s.9.2.9.2c.5.1.6.5.6.7l-.6 2.4c0 0 .1 0 .1 0l-.1 0-.8 3.3c-.1.2-.2.4-.6.3 0 0-.9-.2-.9-.2l-.6 1.5 2.4.6c.4.1.7.2 1.1.2l-.5 2.1 1.2.3.5-2c.3.1.7.2 1 .2l-.5 2 1.2.3.5-2.1c2.1.4 3.7.2 4.4-1.7.5-1.5 0-2.4-1.1-3 .8-.2 1.4-.7 1.6-1.8zm-2.8 4c-.4 1.5-3 .7-3.8.5l.7-2.8c.8.2 3.5.6 3.1 2.3zm.4-4c-.3 1.4-2.5.7-3.2.5l.6-2.5c.7.2 2.9.5 2.6 2z" fill="#fff"/></svg>'
+        return f'<svg width="{size}" height="{size}" viewBox="0 0 24 24" fill="none" style="flex-shrink:0; vertical-align:middle;"><circle cx="12" cy="12" r="11" fill="#f7931a"/><path d="M15.5 10.5c.3-1.5-.9-2.3-2.5-2.8l.5-2-1.2-.3-.5 2c-.3-.1-.7-.2-1-.2l.5-2-1.2-.3-.5 2-2.5-.6-.4 1.4s.9.2.9.2c.5.1.6.5.6.7l-.6 2.4c0 0 .1 0 .1 0l-.1 0-.8 3.3c-.1.2-.2.4-.6.3 0 0-.9-.2-.9-.2l-.6 1.5 2.4.6c.4.1.7.2 1.1.2l-.5 2.1 1.2.3.5-2c.3.1.7.2 1 .2l-.5 2 1.2.3.5-2.1c2.1.4 3.7.2 4.4-1.7.5-1.5 0-2.4-1.1-3 .8-.2 1.4-.7 1.6-1.8zm-2.8 4c-.4 1.5-3 .7-3.8.5l.7-2.8c.8.2 3.5.6 3.1 2.3zm.4-4c-.3 1.4-2.5.7-3.2.5l.6-2.5c.7.2 2.9.5 2.6 2z" fill="#fff"/></svg>'
     elif "ETH" in s:
-        icon = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;"><circle cx="12" cy="12" r="11" fill="#627eea"/><path d="M12 4v6.6l5.6 2.5L12 4z" fill="#fff" fill-opacity=".6"/><path d="M12 4L6.4 13.1l5.6-2.5V4z" fill="#fff"/><path d="M12 17.5v4.5l5.6-7.8L12 17.5z" fill="#fff" fill-opacity=".6"/><path d="M12 22v-4.5L6.4 14.2L12 22z" fill="#fff"/><path d="M12 16.5l5.6-3.3L12 10.6v5.9z" fill="#fff" fill-opacity=".2"/><path d="M6.4 13.2l5.6 3.3v-5.9l-5.6 2.6z" fill="#fff" fill-opacity=".6"/></svg>'
+        return f'<svg width="{size}" height="{size}" viewBox="0 0 24 24" fill="none" style="flex-shrink:0; vertical-align:middle;"><circle cx="12" cy="12" r="11" fill="#627eea"/><path d="M12 4v6.6l5.6 2.5L12 4z" fill="#fff" fill-opacity=".6"/><path d="M12 4L6.4 13.1l5.6-2.5V4z" fill="#fff"/><path d="M12 17.5v4.5l5.6-7.8L12 17.5z" fill="#fff" fill-opacity=".6"/><path d="M12 22v-4.5L6.4 14.2L12 22z" fill="#fff"/><path d="M12 16.5l5.6-3.3L12 10.6v5.9z" fill="#fff" fill-opacity=".2"/><path d="M6.4 13.2l5.6 3.3v-5.9l-5.6 2.6z" fill="#fff" fill-opacity=".6"/></svg>'
     elif "SOL" in s:
-        icon = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;"><circle cx="12" cy="12" r="11" fill="#0f172a" stroke="#14F195" stroke-width="1.5"/><path d="M7 16h8.5l1.5-1.5H8.5L7 16zm0-7h8.5l1.5-1.5H8.5L7 9zm10 3.5H8.5L7 14h8.5l1.5-1.5z" fill="#14F195"/></svg>'
+        return f'<svg width="{size}" height="{size}" viewBox="0 0 24 24" fill="none" style="flex-shrink:0; vertical-align:middle;"><circle cx="12" cy="12" r="11" fill="#0f172a" stroke="#14F195" stroke-width="1.5"/><path d="M7 16h8.5l1.5-1.5H8.5L7 16zm0-7h8.5l1.5-1.5H8.5L7 9zm10 3.5H8.5L7 14h8.5l1.5-1.5z" fill="#14F195"/></svg>'
     elif "XAU" in s or "PAXG" in s or "GOLD" in s:
-        icon = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;"><circle cx="12" cy="12" r="11" fill="#eab308"/><path d="M7 15l2-6h6l2 6H7zm2.5-1.5h5l-.8-3h-3.4l-.8 3z" fill="#fff"/></svg>'
+        return f'<svg width="{size}" height="{size}" viewBox="0 0 24 24" fill="none" style="flex-shrink:0; vertical-align:middle;"><circle cx="12" cy="12" r="11" fill="#eab308"/><path d="M7 15l2-6h6l2 6H7zm2.5-1.5h5l-.8-3h-3.4l-.8 3z" fill="#fff"/></svg>'
     else:
-        icon = '<span style="display:inline-block; width:20px; height:20px; border-radius:50%; background:#334155; color:#cbd5e1; font-size:10px; line-height:20px; text-align:center; flex-shrink:0;">●</span>'
+        return f'<span style="display:inline-block; width:{size}px; height:{size}px; border-radius:50%; background:#334155; color:#cbd5e1; font-size:10px; line-height:{size}px; text-align:center; flex-shrink:0; vertical-align:middle;">●</span>'
+
+
+def render_coin_badge(symbol: str, size: int = 20) -> str:
+    """Render coin icon and bold symbol badge matching Bybit table Contracts column."""
+    icon = get_coin_icon(symbol, size=size)
     return f'<div style="display:inline-flex; align-items:center; gap:8px;">{icon}<span style="font-weight:700; color:#f8fafc;">{symbol}</span></div>'
 
 
@@ -1028,7 +1033,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                 table_tp = f'<span class="target-tag tp">🎯 ${l_tp:,.2f}</span><div style="font-size:10px; color:#10b981; margin-top:2px;">Target: ${abs(l_tp_buf):,.2f} ({abs(l_tp_buf_pct):.2f}%)</div>' if (l_tp > 0 and px) else (f'<span class="target-tag tp">🎯 ${l_tp:,.2f}</span>' if l_tp > 0 else '---')
 
                 active_positions_rows.append(f"""<tr>
-                  <td><b>{sym}</b></td>
+                  <td>{render_coin_badge(sym)}</td>
                   <td><span class="badge long">🟢 LONG</span></td>
                   <td><span class="badge {'primary' if l_role=='PRIMARY' else 'counter'}">{l_role}</span> <span class="badge event">{p_phase}</span></td>
                   <td style="font-family:'JetBrains Mono';">{l_size} <span style="color:#64748b; font-size:11px;">{l_notional_str}</span></td>
@@ -1085,7 +1090,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                 table_tp = f'<span class="target-tag tp">🎯 ${s_tp:,.2f}</span><div style="font-size:10px; color:#10b981; margin-top:2px;">Target: ${abs(s_tp_buf):,.2f} ({abs(s_tp_buf_pct):.2f}%)</div>' if (s_tp > 0 and px) else (f'<span class="target-tag tp">🎯 ${s_tp:,.2f}</span>' if s_tp > 0 else '---')
 
                 active_positions_rows.append(f"""<tr>
-                  <td><b>{sym}</b></td>
+                  <td>{render_coin_badge(sym)}</td>
                   <td><span class="badge short">🔴 SHORT</span></td>
                   <td><span class="badge {'primary' if s_role=='PRIMARY' else 'counter'}">{s_role}</span> <span class="badge event">{p_phase}</span></td>
                   <td style="font-family:'JetBrains Mono';">{s_size} <span style="color:#64748b; font-size:11px;">{s_notional_str}</span></td>
@@ -1099,8 +1104,8 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             market_cards.append(f"""
             <div class="card market-card" data-symbol="{sym}">
               <div class="market-header">
-                <div>
-                  <span class="sym-badge">{sym}</span>
+                <div style="display:flex; align-items:center; gap:8px;">
+                  <span class="sym-badge">{get_coin_icon(sym, size=20)} {sym}</span>
                   <span class="status-pill" style="border-color:{p_color}; color:{p_color}">{p_status}</span>
                 </div>
                 <div style="display:flex; align-items:center; gap:8px;">
@@ -1197,7 +1202,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
 
             trade_rows.append(f"""<tr>
               <td>{t.get('timestamp','')}</td>
-              <td><b>{t.get('symbol','')}</b></td>
+              <td>{render_coin_badge(t.get('symbol',''))}</td>
               <td style="text-align:center;"><span style="font-family:'JetBrains Mono'; font-size:11px; color:#94a3b8;">#{cycle_val}</span></td>
               <td><span class="badge {leg_badge}">{leg_val}</span></td>
               <td><span class="badge {evt_class}">{evt_val}</span></td>
@@ -1280,7 +1285,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         badges = []
         for s, val in sym_pnl.items():
             b_col = "#10b981" if val >= 0 else "#ef4444"
-            badges.append(f'<span><b>{s}:</b> <span style="color:{b_col};">${val:+.2f}</span></span>')
+            badges.append(f'<span style="display:inline-flex; align-items:center; gap:5px; vertical-align:middle;">{get_coin_icon(s, size=16)} <b>{s}:</b> <span style="color:{b_col};">${val:+.2f}</span></span>')
         pnl_by_symbol_badges = " &bull; ".join(badges) if badges else '<span style="color:#64748b;">Awaiting trade events...</span>'
 
         return {

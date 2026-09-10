@@ -45,6 +45,7 @@ try:
     from research.monte_carlo import MonteCarloEngine
     from research.optimizer import StrategyOptimizer
     from research.dashboard_components import get_research_css, get_research_html, get_research_js
+    from research.test_store import save_test_run, get_test_run, list_test_runs, delete_test_run
 except ImportError:
     ReplayEngine = None
     CHAMPION_PROFILES = {}
@@ -53,6 +54,11 @@ except ImportError:
     get_research_css = lambda: ""
     get_research_html = lambda: ""
     get_research_js = lambda: ""
+    save_test_run = lambda *args, **kwargs: {"test_id": "err", "test_url": "#"}
+    get_test_run = lambda test_id: None
+    list_test_runs = lambda *args, **kwargs: []
+    delete_test_run = lambda test_id: False
+
 
 # In-memory candle cache: { (symbol, interval, limit): (timestamp, data) }
 CANDLE_CACHE = {}
@@ -580,6 +586,14 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/research/optimize":
                 self._handle_api_research_optimize(payload)
                 return
+            elif parsed.path == "/api/research/test/delete":
+                tid = payload.get("id") or payload.get("test_id")
+                if not tid:
+                    self._send_json({"error": "Missing test id"}, 400)
+                    return
+                ok = delete_test_run(tid)
+                self._send_json({"status": "ok", "deleted": ok, "test_id": tid})
+                return
 
         self.send_error(404, "Not Found")
 
@@ -622,7 +636,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             return
 
         # Routes
-        if parsed.path in ["/", "/dashboard"]:
+        if parsed.path in ["/", "/dashboard", "/research"]:
             self._send_html(self._render_dashboard(), cookie=set_cookie)
         elif parsed.path == "/ws":
             self._handle_ws()
@@ -647,6 +661,24 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                 "symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "PAXGUSDT"],
                 "profiles": CHAMPION_PROFILES if CHAMPION_PROFILES else {},
             })
+        elif parsed.path == "/api/research/test":
+            tid = qs.get("id", [None])[0] or qs.get("test_id", [None])[0]
+            if not tid:
+                self._send_json({"error": "Missing test id parameter (?id=...)"}, 400)
+                return
+            run_data = get_test_run(tid)
+            if not run_data:
+                self._send_json({"error": f"Test run '{tid}' not found"}, 404)
+                return
+            self._send_json({"status": "ok", "test": run_data})
+        elif parsed.path == "/api/research/tests":
+            limit = int(qs.get("limit", [50])[0])
+            ttype = qs.get("type", [None])[0]
+            self._send_json({
+                "status": "ok",
+                "tests": list_test_runs(limit=limit, test_type=ttype),
+            })
+
         else:
             self.send_error(404, "Not Found")
 
@@ -1007,6 +1039,35 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                 "candles_count": res.candles_count,
                 "price_candles": price_candles,
             }
+
+            # Persist test run to generate permanent link (Permlink)
+            try:
+                summary = {
+                    "symbol": res.symbol,
+                    "total_trades": res.total_trades,
+                    "win_rate": res.win_rate,
+                    "net_profit": res.net_profit,
+                    "profit_factor": res.profit_factor,
+                    "max_drawdown_pct": res.max_drawdown_pct,
+                    "expectancy_usd": res.expectancy_usd,
+                    "cagr_pct": res.cagr_pct,
+                    "sortino_ratio": res.sortino_ratio,
+                    "calmar_ratio": res.calmar_ratio,
+                    "shield_rate": res.shield_rate,
+                }
+                saved = save_test_run(
+                    test_type="backtest",
+                    symbol=res.symbol,
+                    title=f"{res.symbol} 1-Min Replay Backtest",
+                    summary=summary,
+                    data=resp,
+                    params=payload,
+                )
+                resp["test_id"] = saved["test_id"]
+                resp["test_url"] = saved["test_url"]
+            except Exception as se:
+                logger.warning(f"Could not persist backtest test run: {se}")
+
             self._send_json(resp)
         except Exception as e:
             logger.error(f"Research backtest API error: {e}", exc_info=True)
@@ -1072,6 +1133,36 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                     "confidence_level_pct": rst.confidence_level_pct,
                 },
             }
+
+            # Persist test run to generate permanent link (Permlink)
+            try:
+                sym = payload.get("symbol", "PORTFOLIO").upper()
+                summary = {
+                    "symbol": sym,
+                    "iterations": mc.iterations,
+                    "num_trades": mc.num_trades,
+                    "median_profit": mc.median_profit,
+                    "mean_profit": mc.mean_profit,
+                    "prob_profit": mc.prob_profit,
+                    "risk_of_ruin": mc.risk_of_ruin,
+                    "strategy_net_profit": rst.strategy_net_profit,
+                    "p_value": rst.p_value,
+                    "z_score": rst.z_score,
+                    "is_significant": rst.is_significant,
+                }
+                saved = save_test_run(
+                    test_type="monte_carlo",
+                    symbol=sym,
+                    title=f"{sym} Monte Carlo (5k) & RST",
+                    summary=summary,
+                    data=resp,
+                    params=payload,
+                )
+                resp["test_id"] = saved["test_id"]
+                resp["test_url"] = saved["test_url"]
+            except Exception as se:
+                logger.warning(f"Could not persist Monte Carlo test run: {se}")
+
             self._send_json(resp)
         except Exception as e:
             logger.error(f"Research Monte Carlo API error: {e}", exc_info=True)
@@ -1126,10 +1217,37 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                     for t in res.leaderboard[:10]
                 ],
             }
+
+            # Persist test run to generate permanent link (Permlink)
+            try:
+                summary = {
+                    "symbol": res.symbol,
+                    "trials": res.trials_evaluated,
+                    "objective": res.objective,
+                    "best_fitness": res.best_fitness,
+                    "best_params": res.best_params,
+                    "testing_profit": res.best_testing_metrics.get("profit", 0.0),
+                    "testing_win_rate": res.best_testing_metrics.get("win_rate", 0.0),
+                    "testing_max_dd": res.best_testing_metrics.get("max_drawdown_pct", 0.0),
+                }
+                saved = save_test_run(
+                    test_type="optimizer",
+                    symbol=res.symbol,
+                    title=f"{res.symbol} Walk-Forward Optimization",
+                    summary=summary,
+                    data=resp,
+                    params=payload,
+                )
+                resp["test_id"] = saved["test_id"]
+                resp["test_url"] = saved["test_url"]
+            except Exception as se:
+                logger.warning(f"Could not persist Optimizer test run: {se}")
+
             self._send_json(resp)
         except Exception as e:
             logger.error(f"Research Optimize API error: {e}", exc_info=True)
             self._send_json({"error": str(e)}, 500)
+
 
     def _build_ws_frame(self, payload_bytes: bytes) -> bytes:
         """Construct an unmasked RFC 6455 WebSocket text frame (server -> client)."""

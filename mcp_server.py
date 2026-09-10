@@ -29,12 +29,17 @@ try:
     from research.replay_engine import ReplayEngine, CHAMPION_PROFILES
     from research.monte_carlo import MonteCarloEngine
     from research.optimizer import StrategyOptimizer
+    from research.test_store import save_test_run, get_test_run, list_test_runs
 except ImportError as e:
     logger.error(f"Failed to import research package: {e}")
     ReplayEngine = None
     CHAMPION_PROFILES = {}
     MonteCarloEngine = None
     StrategyOptimizer = None
+    save_test_run = lambda *args, **kwargs: {"test_id": "none", "test_url": "#"}
+    get_test_run = lambda tid: None
+    list_test_runs = lambda *args, **kwargs: []
+
 
 
 def get_bot_status_tool(args: Dict[str, Any]) -> Dict[str, Any]:
@@ -98,7 +103,7 @@ def run_backtest_tool(args: Dict[str, Any]) -> Dict[str, Any]:
         engine = ReplayEngine(initial_capital=float(args.get("initial_capital", 1000.0)))
         res = engine.run_backtest(symbol, candles, custom_params=custom_params if custom_params else None)
 
-        return {
+        out = {
             "symbol": res.symbol,
             "candles_evaluated": len(candles),
             "total_trades": res.total_trades,
@@ -136,6 +141,30 @@ def run_backtest_tool(args: Dict[str, Any]) -> Dict[str, Any]:
                 for t in res.trades[-10:]
             ],
         }
+
+        # Auto-persist test run to create shareable permlink
+        try:
+            saved = save_test_run(
+                test_type="backtest",
+                symbol=res.symbol,
+                title=f"{res.symbol} 1-Min Replay Backtest (MCP)",
+                summary={
+                    "symbol": res.symbol,
+                    "net_profit": res.net_profit,
+                    "win_rate": res.win_rate,
+                    "profit_factor": res.profit_factor,
+                    "max_drawdown_pct": res.max_drawdown_pct,
+                    "total_trades": res.total_trades,
+                },
+                data=out,
+                params=args,
+            )
+            out["test_id"] = saved["test_id"]
+            out["permlink"] = saved["test_url"]
+        except Exception as se:
+            logger.warning(f"Could not auto-save MCP backtest run: {se}")
+
+        return out
     except Exception as e:
         logger.error(f"Backtest execution failed: {e}", exc_info=True)
         return {"error": str(e)}
@@ -161,7 +190,7 @@ def run_monte_carlo_tool(args: Dict[str, Any]) -> Dict[str, Any]:
         mc_res = mc_engine.run_monte_carlo(pnls, iterations=iterations)
         rst_res = mc_engine.run_rst_permutation(pnls, permutations=permutations)
 
-        return {
+        out = {
             "symbol": symbol,
             "trades_count": len(pnls),
             "monte_carlo": {
@@ -187,6 +216,29 @@ def run_monte_carlo_tool(args: Dict[str, Any]) -> Dict[str, Any]:
                 "is_statistically_significant": rst_res.is_significant,
             },
         }
+
+        # Auto-persist test run to create shareable permlink
+        try:
+            saved = save_test_run(
+                test_type="monte_carlo",
+                symbol=symbol,
+                title=f"{symbol} Monte Carlo (5k) & RST (MCP)",
+                summary={
+                    "symbol": symbol,
+                    "median_profit": mc_res.median_profit,
+                    "prob_profit": mc_res.prob_profit,
+                    "p_value": rst_res.p_value,
+                    "is_significant": rst_res.is_significant,
+                },
+                data=out,
+                params=args,
+            )
+            out["test_id"] = saved["test_id"]
+            out["permlink"] = saved["test_url"]
+        except Exception as se:
+            logger.warning(f"Could not auto-save MCP Monte Carlo run: {se}")
+
+        return out
     except Exception as e:
         logger.error(f"Monte Carlo execution failed: {e}", exc_info=True)
         return {"error": str(e)}
@@ -208,7 +260,7 @@ def run_optimization_tool(args: Dict[str, Any]) -> Dict[str, Any]:
         opt = StrategyOptimizer(initial_capital=1000.0)
         res = opt.run_optimization(symbol, candles, num_trials=trials, train_ratio=train_ratio, objective=objective)
 
-        return {
+        out = {
             "symbol": res.symbol,
             "trials_evaluated": res.trials_evaluated,
             "objective": res.objective,
@@ -232,9 +284,54 @@ def run_optimization_tool(args: Dict[str, Any]) -> Dict[str, Any]:
                 for t in res.leaderboard[:5]
             ],
         }
+
+        # Auto-persist test run to create shareable permlink
+        try:
+            saved = save_test_run(
+                test_type="optimizer",
+                symbol=res.symbol,
+                title=f"{res.symbol} Walk-Forward Optimization (MCP)",
+                summary={
+                    "symbol": res.symbol,
+                    "best_fitness": res.best_fitness,
+                    "trials": res.trials_evaluated,
+                    "objective": res.objective,
+                },
+                data=out,
+                params=args,
+            )
+            out["test_id"] = saved["test_id"]
+            out["permlink"] = saved["test_url"]
+        except Exception as se:
+            logger.warning(f"Could not auto-save MCP optimizer run: {se}")
+
+        return out
     except Exception as e:
         logger.error(f"Optimization execution failed: {e}", exc_info=True)
         return {"error": str(e)}
+
+
+def list_research_tests_tool(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Lists saved research tests with summaries and permalinks."""
+    limit = int(args.get("limit", 25))
+    ttype = args.get("type")
+    runs = list_test_runs(limit=limit, test_type=ttype)
+    return {
+        "tests": runs,
+        "count": len(runs),
+    }
+
+
+def get_research_test_tool(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Retrieves full details of a saved test run by test_id."""
+    test_id = args.get("test_id")
+    if not test_id:
+        return {"error": "Missing required argument: 'test_id'"}
+    run_obj = get_test_run(test_id)
+    if not run_obj:
+        return {"error": f"Test run '{test_id}' not found"}
+    return {"test": run_obj}
+
 
 
 def get_indicators_tool(args: Dict[str, Any]) -> Dict[str, Any]:
@@ -377,6 +474,28 @@ TOOLS_DEFINITIONS = [
             "properties": {},
         },
     },
+    {
+        "name": "hyper_hedge_list_research_tests",
+        "description": "List saved quantitative research test runs (backtests, Monte Carlo, and optimizations) with metadata and permalinks.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Maximum tests to return (default 25)"},
+                "type": {"type": "string", "enum": ["backtest", "monte_carlo", "optimizer"], "description": "Filter by test type"},
+            },
+        },
+    },
+    {
+        "name": "hyper_hedge_get_research_test",
+        "description": "Retrieve full execution data and performance metrics for a specific research test by its unique test_id.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "test_id": {"type": "string", "description": "Unique test ID, e.g. bt_btcusdt_20260911_..."},
+            },
+            "required": ["test_id"],
+        },
+    },
 ]
 
 TOOL_HANDLERS = {
@@ -387,7 +506,10 @@ TOOL_HANDLERS = {
     "hyper_hedge_run_optimization": run_optimization_tool,
     "hyper_hedge_get_indicators": get_indicators_tool,
     "hyper_hedge_ai_summary": get_ai_summary_tool,
+    "hyper_hedge_list_research_tests": list_research_tests_tool,
+    "hyper_hedge_get_research_test": get_research_test_tool,
 }
+
 
 
 def handle_request(req: Dict[str, Any]) -> Optional[Dict[str, Any]]:

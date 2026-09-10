@@ -471,7 +471,270 @@ def get_research_css() -> str:
       background: #38bdf8;
       color: #080c14;
     }
+    .btn-research-history {
+      background: rgba(148, 163, 184, 0.12);
+      border: 1px solid rgba(148, 163, 184, 0.3);
+      color: #cbd5e1;
+    }
+    .btn-research-history:hover {
+      background: rgba(148, 163, 184, 0.25);
+      color: #f8fafc;
+      border-color: #94a3b8;
+    }
+    /* Shareable Test Permlink Bar */
+    .test-permlink-bar {
+      background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(8, 12, 20, 0.98));
+      border: 1px solid rgba(56, 189, 248, 0.4);
+      border-left: 4px solid #38bdf8;
+      border-radius: 8px;
+      padding: 12px 18px;
+      margin-bottom: 20px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+      animation: fadeIn 0.25s ease-out;
+    }
+    .permlink-meta {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex: 1;
+      min-width: 280px;
+    }
+    .permlink-icon {
+      font-size: 22px;
+    }
+    .permlink-title-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 3px;
+    }
+    .permlink-badge {
+      background: rgba(56, 189, 248, 0.2);
+      color: #38bdf8;
+      border: 1px solid rgba(56, 189, 248, 0.4);
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+    .permlink-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #f8fafc;
+    }
+    .permlink-ts {
+      font-size: 11px;
+      color: #64748b;
+    }
+    .permlink-summary-line {
+      font-size: 11px;
+      color: #94a3b8;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .permlink-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 320px;
+      flex: 1;
+      justify-content: flex-end;
+    }
+    .permlink-input {
+      background: #020617;
+      border: 1px solid #1e293b;
+      border-radius: 6px;
+      color: #38bdf8;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      padding: 6px 10px;
+      width: 100%;
+      max-width: 280px;
+      outline: none;
+    }
+    .btn-permlink-copy {
+      background: #38bdf8;
+      color: #020617;
+      border: none;
+      font-weight: 700;
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 11px;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .btn-permlink-copy:hover {
+      background: #7dd3fc;
+      transform: translateY(-1px);
+    }
+    .btn-permlink-share {
+      background: rgba(255, 255, 255, 0.06);
+      color: #f8fafc;
+      border: 1px solid #334155;
+      padding: 6px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 600;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .btn-permlink-share:hover {
+      background: rgba(255, 255, 255, 0.12);
+    }
+    /* Modal: Saved Tests */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(2, 6, 23, 0.85);
+      backdrop-filter: blur(4px);
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      animation: fadeIn 0.2s ease-out;
+    }
+    .modal-card {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 12px;
+      width: 100%;
+      max-width: 800px;
+      max-height: 85vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+      overflow: hidden;
+    }
+    .modal-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid #1e293b;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #090e1a;
+    }
+    .btn-close-modal {
+      background: transparent;
+      border: none;
+      color: #94a3b8;
+      font-size: 22px;
+      cursor: pointer;
+      line-height: 1;
+      padding: 0 4px;
+    }
+    .btn-close-modal:hover {
+      color: #f8fafc;
+    }
+    .modal-body {
+      padding: 16px 20px;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .saved-test-item {
+      background: #080c14;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      transition: border-color 0.15s;
+    }
+    .saved-test-item:hover {
+      border-color: #38bdf8;
+    }
+    .saved-test-info {
+      flex: 1;
+    }
+    .saved-test-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+    .saved-test-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #f8fafc;
+    }
+    .saved-test-meta {
+      font-size: 11px;
+      color: #64748b;
+    }
+    .saved-test-metrics {
+      font-size: 11px;
+      color: #94a3b8;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .saved-test-btns {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn-load-test {
+      background: #38bdf8;
+      color: #020617;
+      border: none;
+      padding: 5px 12px;
+      border-radius: 5px;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .btn-load-test:hover {
+      background: #7dd3fc;
+    }
+    .btn-delete-test {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      color: #f87171;
+      padding: 5px 8px;
+      border-radius: 5px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .btn-delete-test:hover {
+      background: rgba(239, 68, 68, 0.3);
+      color: #fca5a5;
+    }
+    /* Toast Alert */
+    .research-toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: #020617;
+      color: #38bdf8;
+      border: 1px solid #38bdf8;
+      padding: 10px 18px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      z-index: 10000;
+      display: none;
+      animation: fadeIn 0.2s ease-out;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
     """
+
 
 def get_research_html() -> str:
     return """
@@ -548,9 +811,35 @@ def get_research_html() -> str:
           <button id="btn-run-opt" class="btn btn-research-amber" onclick="runResearchOptimize()">
             🧬 Run Jesse Walk-Forward Optimizer
           </button>
+          <button id="btn-saved-tests" class="btn btn-research-history" onclick="openSavedTestsModal()">
+            📚 Saved Tests (<span id="saved-tests-count">0</span>)
+          </button>
           <div id="rs-status-badge" class="rs-status-idle">Engine Ready</div>
         </div>
       </div>
+
+      <!-- Test Permlink & Share Bar (Active Test Link) -->
+      <div id="test-permlink-bar" class="test-permlink-bar" style="display:none;">
+        <div class="permlink-meta">
+          <span class="permlink-icon">🔗</span>
+          <div>
+            <div class="permlink-title-wrap">
+              <span id="permlink-badge" class="permlink-badge">TEST RUN</span>
+              <span id="permlink-title" class="permlink-title">BTCUSDT 1-Min Replay Backtest</span>
+              <span id="permlink-ts" class="permlink-ts"></span>
+            </div>
+            <div class="permlink-summary-line" id="permlink-summary-line">
+              Net Profit: +$0.00 | Win Rate: 0.0% | PF: 0.00 | Max DD: 0.0%
+            </div>
+          </div>
+        </div>
+        <div class="permlink-actions">
+          <input type="text" id="permlink-input" class="permlink-input" readonly value="" onclick="this.select()" />
+          <button class="btn btn-permlink-copy" onclick="copyActivePermlink()">📋 Copy Link</button>
+          <button class="btn btn-permlink-share" onclick="openActivePermlinkInNewTab()">↗ Open Tab</button>
+        </div>
+      </div>
+
 
       <!-- Quick KPI Scorecards Grid -->
       <div class="stats-grid" id="research-kpis" style="margin-bottom:24px;">
@@ -858,8 +1147,28 @@ def get_research_html() -> str:
           </table>
         </div>
       </div>
+
+      <!-- Modal: Saved Research Tests Browser -->
+      <div id="modal-saved-tests" class="modal-overlay" style="display:none;" onclick="if(event.target===this)closeSavedTestsModal();">
+        <div class="modal-card">
+          <div class="modal-header">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span style="font-size:18px;">📚</span>
+              <h3 style="margin:0; font-size:15px; font-weight:700; color:#f8fafc;">Saved Research Tests &amp; Permlinks</h3>
+            </div>
+            <button class="btn-close-modal" onclick="closeSavedTestsModal()">&times;</button>
+          </div>
+          <div class="modal-body" id="saved-tests-list">
+            <div style="text-align:center; padding:20px; color:#64748b;">Loading saved tests...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Floating Toast Notification -->
+      <div id="research-toast" class="research-toast"></div>
     </div>
     """
+
 
 def get_research_js() -> str:
     return """
@@ -971,6 +1280,28 @@ def get_research_js() -> str:
         drawDrawdownChart(data.drawdown_series || data.drawdown_curve);
         drawScenarioChart(data.scenario_counts);
         setResearchStatus('done', '✓ 1-Min Replay Complete (' + data.total_trades + ' cycles)');
+
+        if (data.test_id) {
+          showActiveTestPermlink({
+            test_id: data.test_id,
+            test_url: data.test_url,
+            test_type: 'backtest',
+            title: sym + ' 1-Min Replay Backtest',
+            symbol: sym,
+            created_at: new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC',
+            summary: {
+              symbol: sym,
+              net_profit: data.net_profit,
+              win_rate: data.win_rate,
+              profit_factor: data.profit_factor,
+              max_drawdown_pct: data.max_drawdown_pct,
+              total_trades: data.total_trades,
+              expectancy_usd: data.expectancy_usd,
+              cagr_pct: data.cagr_pct
+            }
+          });
+          updateSavedTestsCount();
+        }
       } catch (err) {
         setResearchStatus('error', '✗ Backtest Error: ' + err.message);
       } finally {
@@ -1007,6 +1338,26 @@ def get_research_js() -> str:
           drawFanChart(data.monte_carlo.fan_chart);
         }
         setResearchStatus('done', '✓ 5,000-Path MC & RST Complete');
+
+        if (data.test_id) {
+          showActiveTestPermlink({
+            test_id: data.test_id,
+            test_url: data.test_url,
+            test_type: 'monte_carlo',
+            title: sym + ' Monte Carlo (5k) & RST',
+            symbol: sym,
+            created_at: new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC',
+            summary: {
+              symbol: sym,
+              median_profit: data.monte_carlo ? data.monte_carlo.median_profit : 0,
+              prob_profit: data.monte_carlo ? data.monte_carlo.prob_profit : 0,
+              risk_of_ruin: data.monte_carlo ? data.monte_carlo.risk_of_ruin : 0,
+              p_value: data.rst ? data.rst.p_value : 0,
+              is_significant: data.rst ? data.rst.is_significant : false
+            }
+          });
+          updateSavedTestsCount();
+        }
       } catch (err) {
         setResearchStatus('error', '✗ MC Error: ' + err.message);
       } finally {
@@ -1040,12 +1391,31 @@ def get_research_js() -> str:
 
         renderOptimizerResults(data);
         setResearchStatus('done', '✓ Walk-Forward Optimization Complete');
+
+        if (data.test_id) {
+          showActiveTestPermlink({
+            test_id: data.test_id,
+            test_url: data.test_url,
+            test_type: 'optimizer',
+            title: sym + ' Walk-Forward Optimization',
+            symbol: sym,
+            created_at: new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC',
+            summary: {
+              symbol: sym,
+              best_fitness: data.best_fitness,
+              trials: data.trials_evaluated,
+              objective: data.objective
+            }
+          });
+          updateSavedTestsCount();
+        }
       } catch (err) {
         setResearchStatus('error', '✗ Optimization Error: ' + err.message);
       } finally {
         if (btn) btn.disabled = false;
       }
     }
+
 
     function renderBacktestKPIs(d) {
       const pnlEl = document.getElementById('kpi-net-profit');
@@ -1913,9 +2283,244 @@ def get_research_js() -> str:
       }
     });
 
-    // Auto-restore view preference
-    const savedMainView = localStorage.getItem('active_main_view');
-    if (savedMainView === 'research') {
-      switchMainView('research');
+    // =========================================================================
+    // PERMLINK & UNIQUE TEST RUN MANAGEMENT
+    // =========================================================================
+
+    function showToast(msg) {
+      let toast = document.getElementById('research-toast');
+      if (!toast) return;
+      toast.innerText = msg;
+      toast.style.display = 'block';
+      if (window.toastTimer) clearTimeout(window.toastTimer);
+      window.toastTimer = setTimeout(() => {
+        toast.style.display = 'none';
+      }, 2500);
     }
+
+    function showActiveTestPermlink(testObj) {
+      if (!testObj || !testObj.test_id) return;
+      const bar = document.getElementById('test-permlink-bar');
+      const badge = document.getElementById('permlink-badge');
+      const titleEl = document.getElementById('permlink-title');
+      const tsEl = document.getElementById('permlink-ts');
+      const sumEl = document.getElementById('permlink-summary-line');
+      const inputEl = document.getElementById('permlink-input');
+      if (!bar || !inputEl) return;
+
+      const fullUrl = window.location.origin + (testObj.test_url || ('/dashboard?test_id=' + testObj.test_id));
+      inputEl.value = fullUrl;
+
+      const ttype = (testObj.test_type || 'test').toLowerCase();
+      if (badge) {
+        badge.innerText = ttype.toUpperCase().replace('_', ' ');
+        if (ttype === 'backtest') badge.style.color = '#38bdf8';
+        else if (ttype === 'monte_carlo') badge.style.color = '#c084fc';
+        else if (ttype === 'optimizer') badge.style.color = '#fbbf24';
+      }
+
+      if (titleEl) titleEl.innerText = testObj.title || (testObj.symbol + ' Research Test');
+      if (tsEl) tsEl.innerText = testObj.created_at || '';
+
+      if (sumEl && testObj.summary) {
+        const s = testObj.summary;
+        if (ttype === 'backtest') {
+          sumEl.innerHTML = 'Net Profit: <b style="color:' + ((s.net_profit||0)>=0?'#4ade80':'#f87171') + '">' + ((s.net_profit||0)>=0?'+':'') + '$' + (s.net_profit||0).toFixed(2) + '</b> &bull; Win Rate: <b>' + (s.win_rate||0).toFixed(1) + '%</b> &bull; PF: <b>' + (s.profit_factor||0).toFixed(2) + '</b> &bull; Max DD: <b style="color:#f87171">' + (s.max_drawdown_pct||0).toFixed(2) + '%</b> &bull; Cycles: <b>' + (s.total_trades||0) + '</b>';
+        } else if (ttype === 'monte_carlo') {
+          sumEl.innerHTML = 'MC Median: <b style="color:#c084fc">$' + (s.median_profit||0).toFixed(2) + '</b> &bull; Prob Profit: <b>' + (s.prob_profit||0).toFixed(1) + '%</b> &bull; RST p-val: <b>p = ' + (s.p_value||0).toFixed(4) + '</b> (' + (s.is_significant ? '<span style="color:#4ade80">Significant</span>' : '<span style="color:#94a3b8">Null</span>') + ')';
+        } else if (ttype === 'optimizer') {
+          sumEl.innerHTML = 'Best Fitness: <b style="color:#fbbf24">' + (s.best_fitness||0).toFixed(3) + '</b> &bull; Evaluated: <b>' + (s.trials||0) + ' Trials</b> &bull; Objective: <b>' + (s.objective||'sharpe') + '</b>';
+        }
+      }
+
+      bar.style.display = 'flex';
+      try {
+        const newUrl = window.location.pathname + '?test_id=' + encodeURIComponent(testObj.test_id);
+        window.history.replaceState({ test_id: testObj.test_id }, '', newUrl);
+      } catch (e) {}
+    }
+
+    function copyActivePermlink() {
+      const input = document.getElementById('permlink-input');
+      if (!input || !input.value) return;
+      input.select();
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(input.value).then(() => {
+          showToast('✓ Test permlink copied to clipboard!');
+        }).catch(() => {
+          document.execCommand('copy');
+          showToast('✓ Link copied!');
+        });
+      } else {
+        document.execCommand('copy');
+        showToast('✓ Link copied!');
+      }
+    }
+
+    function openActivePermlinkInNewTab() {
+      const input = document.getElementById('permlink-input');
+      if (!input || !input.value) return;
+      window.open(input.value, '_blank');
+    }
+
+    async function loadResearchTestById(testId) {
+      if (!testId) return;
+      setResearchStatus('running', '🔗 Fetching saved test ' + testId + '...');
+
+      try {
+        const res = await fetch('/api/research/test?id=' + encodeURIComponent(testId));
+        const json = await res.json();
+        if (json.error) throw new Error(json.error);
+        const test = json.test;
+        if (!test || !test.data) throw new Error('Malformed test run payload');
+
+        const d = test.data;
+        const ttype = (test.test_type || 'backtest').toLowerCase();
+
+        if (ttype === 'backtest') {
+          window.latestResearchBacktestData = d;
+          renderBacktestKPIs(d);
+          renderJesseReport(d);
+          renderSimulatedTrades(d.trades || []);
+          initMasterChart(d);
+          drawEquityChart(d.equity_points || d.equity_curve, d.buy_hold_curve);
+          drawDrawdownChart(d.drawdown_series || d.drawdown_curve);
+          drawScenarioChart(d.scenario_counts);
+          setResearchStatus('done', '✓ Loaded Backtest: ' + test.title);
+        } else if (ttype === 'monte_carlo') {
+          window.latestResearchMCData = d;
+          renderMCKPIs(d);
+          if (d.monte_carlo && d.monte_carlo.fan_chart) {
+            drawFanChart(d.monte_carlo.fan_chart);
+          }
+          setResearchStatus('done', '✓ Loaded Monte Carlo: ' + test.title);
+        } else if (ttype === 'optimizer') {
+          renderOptimizerResults(d);
+          setResearchStatus('done', '✓ Loaded Optimizer: ' + test.title);
+        }
+
+        showActiveTestPermlink(test);
+        showToast('✓ Loaded ' + test.title);
+
+        const bar = document.getElementById('test-permlink-bar');
+        if (bar) bar.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      } catch (err) {
+        setResearchStatus('error', '✗ Could not load test: ' + err.message);
+        showToast('✗ Error: ' + err.message);
+      }
+    }
+
+    async function updateSavedTestsCount() {
+      try {
+        const res = await fetch('/api/research/tests?limit=100');
+        const json = await res.json();
+        if (json.tests) {
+          const el = document.getElementById('saved-tests-count');
+          if (el) el.innerText = json.tests.length;
+        }
+      } catch (e) {}
+    }
+
+    async function openSavedTestsModal() {
+      const modal = document.getElementById('modal-saved-tests');
+      const listEl = document.getElementById('saved-tests-list');
+      if (!modal || !listEl) return;
+
+      modal.style.display = 'flex';
+      listEl.innerHTML = '<div style="text-align:center; padding:30px; color:#64748b;">Loading saved tests...</div>';
+
+      try {
+        const res = await fetch('/api/research/tests?limit=50');
+        const json = await res.json();
+        const tests = json.tests || [];
+
+        if (tests.length === 0) {
+          listEl.innerHTML = '<div style="text-align:center; padding:40px; color:#64748b;">No saved research tests yet.<br><span style="font-size:11px;">Run a backtest, Monte Carlo, or optimizer to automatically create permalinks.</span></div>';
+          return;
+        }
+
+        let html = '';
+        tests.forEach(t => {
+          const ttype = (t.test_type || 'test').toLowerCase();
+          const badgeColor = ttype === 'backtest' ? '#38bdf8' : (ttype === 'monte_carlo' ? '#c084fc' : '#fbbf24');
+          const fullUrl = window.location.origin + (t.test_url || ('/dashboard?test_id=' + t.test_id));
+
+          let metricsSnippet = '';
+          if (t.summary) {
+            const s = t.summary;
+            if (ttype === 'backtest') {
+              metricsSnippet = 'Profit: ' + ((s.net_profit||0)>=0?'+':'') + '$' + (s.net_profit||0).toFixed(2) + ' &bull; WR: ' + (s.win_rate||0).toFixed(1) + '% &bull; Max DD: ' + (s.max_drawdown_pct||0).toFixed(1) + '% &bull; Trades: ' + (s.total_trades||0);
+            } else if (ttype === 'monte_carlo') {
+              metricsSnippet = 'Median: $' + (s.median_profit||0).toFixed(2) + ' &bull; Prob Profit: ' + (s.prob_profit||0).toFixed(1) + '% &bull; p-val: ' + (s.p_value||0).toFixed(4);
+            } else if (ttype === 'optimizer') {
+              metricsSnippet = 'Fitness: ' + (s.best_fitness||0).toFixed(3) + ' &bull; Trials: ' + (s.trials||0);
+            }
+          }
+
+          html += `
+            <div class="saved-test-item">
+              <div class="saved-test-info">
+                <div class="saved-test-header">
+                  <span class="permlink-badge" style="color:${badgeColor}; border-color:${badgeColor}66;">${ttype.toUpperCase().replace('_', ' ')}</span>
+                  <span class="saved-test-title">${t.title || t.symbol}</span>
+                  <span class="saved-test-meta">${t.created_at || ''}</span>
+                </div>
+                <div class="saved-test-metrics">${metricsSnippet}</div>
+              </div>
+              <div class="saved-test-btns">
+                <button class="btn-load-test" onclick="closeSavedTestsModal(); loadResearchTestById('${t.test_id}');">⚡ Load</button>
+                <button class="btn-permlink-share" onclick="navigator.clipboard.writeText('${fullUrl}'); showToast('✓ Copied: ${t.test_id}');">📋 Copy</button>
+                <button class="btn-delete-test" onclick="deleteSavedTest('${t.test_id}');" title="Delete Test">&times;</button>
+              </div>
+            </div>
+          `;
+        });
+        listEl.innerHTML = html;
+      } catch (err) {
+        listEl.innerHTML = '<div style="text-align:center; padding:20px; color:#f87171;">Failed to load tests: ' + err.message + '</div>';
+      }
+    }
+
+    function closeSavedTestsModal() {
+      const modal = document.getElementById('modal-saved-tests');
+      if (modal) modal.style.display = 'none';
+    }
+
+    async function deleteSavedTest(testId) {
+      if (!confirm('Are you sure you want to delete test run ' + testId + '?')) return;
+      try {
+        const res = await fetch('/api/research/test/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: testId })
+        });
+        const json = await res.json();
+        if (json.deleted) {
+          showToast('✓ Deleted test ' + testId);
+          openSavedTestsModal();
+          updateSavedTestsCount();
+        } else {
+          showToast('Could not delete test');
+        }
+      } catch (e) {
+        showToast('Delete error: ' + e.message);
+      }
+    }
+
+    // Auto-restore view preference & check for ?test_id=... deep linking
+    window.addEventListener('DOMContentLoaded', () => {
+      updateSavedTestsCount();
+      const params = new URLSearchParams(window.location.search);
+      const testId = params.get('test_id') || params.get('test');
+      if (testId) {
+        switchMainView('research');
+        loadResearchTestById(testId);
+      } else {
+        const savedMainView = localStorage.getItem('active_main_view');
+        if (savedMainView === 'research') {
+          switchMainView('research');
+        }
+      }
+    });
     """
+

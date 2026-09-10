@@ -108,6 +108,36 @@ def fetch_bybit_account_and_trades() -> dict:
     return res_data
 
 
+TICKER_CACHE = {}
+TICKER_CACHE_TTL = 10.0
+
+
+def fetch_24h_tickers() -> dict:
+    """Fetch 24h price percentage changes for linear perpetual markets."""
+    now = time.time()
+    if "tickers" in TICKER_CACHE:
+        cached_ts, cached_data = TICKER_CACHE["tickers"]
+        if now - cached_ts < TICKER_CACHE_TTL:
+            return cached_data
+
+    is_testnet = os.environ.get("TESTNET", "true").lower() in ["1", "true", "yes"]
+    domain = "api-testnet.bybit.com" if is_testnet else "api.bybit.com"
+    url = f"https://{domain}/v5/market/tickers?category=linear"
+    tickers = {}
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "BybitHedgeBot/1.0"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            data = json.loads(r.read().decode())
+            for t in data.get("result", {}).get("list", []):
+                sym = t.get("symbol")
+                pct = float(t.get("price24hPcnt", 0) or 0) * 100
+                tickers[sym] = round(pct, 2)
+        TICKER_CACHE["tickers"] = (now, tickers)
+    except Exception:
+        pass
+    return tickers
+
+
 def fetch_candles_with_indicators(symbol: str, interval: str = "60", limit: int = 80) -> dict:
     """Fetch recent klines from Bybit linear API and compute EMA9, EMA21, ADX, and % change."""
     cache_key = (symbol, str(interval), limit)
@@ -500,6 +530,8 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             self._handle_api_clear_trades(qs)
         elif parsed.path == "/api/candles":
             self._handle_api_candles(qs)
+        elif parsed.path == "/api/tickers":
+            self._handle_api_tickers()
         else:
             self.send_error(404, "Not Found")
 
@@ -703,6 +735,10 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         data = fetch_candles_with_indicators(sym, interval=interval, limit=limit)
         self._send_json(data)
 
+    def _handle_api_tickers(self):
+        tickers = fetch_24h_tickers()
+        self._send_json({"tickers": tickers})
+
     # ==========================================================================
     # HTML UI RENDERING
     # ==========================================================================
@@ -845,6 +881,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         tpnl_color = "#10b981" if total_pnl >= 0 else "#ef4444"
 
         # Markets rows & Active Positions
+        tickers_24h = fetch_24h_tickers()
         market_cards = []
         active_positions_rows = []
         pairs = state.get("pairs", {})
@@ -859,6 +896,14 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             slow_e = p.get("slow_ema")
             adx = p.get("adx")
             ind = f"EMA: {fast_e:.1f} / {slow_e:.1f} | ADX: {adx:.1f}" if (fast_e and slow_e and adx) else "Scanning..."
+
+            pct_val = tickers_24h.get(sym)
+            if pct_val is not None:
+                pct_cls = "up" if pct_val >= 0 else "down"
+                pct_str = f"{pct_val:+.2f}%"
+            else:
+                pct_cls = ""
+                pct_str = "--%"
 
             long_leg = p.get("long_leg")
             short_leg = p.get("short_leg")
@@ -986,35 +1031,9 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                   <span class="status-pill" style="border-color:{p_color}; color:{p_color}">{p_status}</span>
                 </div>
                 <div style="display:flex; align-items:center; gap:8px;">
-                  <span class="pct-badge" id="pct-{sym}">--%</span>
+                  <span class="pct-badge {pct_cls}" id="pct-{sym}">{pct_str}</span>
                   <div class="sym-price">{px_str}</div>
                 </div>
-              </div>
-
-              <!-- Interactive Mini Graph Controls -->
-              <div class="chart-controls">
-                <div class="tf-pills" id="tf-pills-{sym}">
-                  <button class="tf-btn" data-tf="15" onclick="changeChartTf('{sym}', '15')">15m</button>
-                  <button class="tf-btn active" data-tf="60" onclick="changeChartTf('{sym}', '60')">1h</button>
-                  <button class="tf-btn" data-tf="240" onclick="changeChartTf('{sym}', '240')">4h</button>
-                  <button class="tf-btn" data-tf="D" onclick="changeChartTf('{sym}', 'D')">1D</button>
-                </div>
-                <div class="zoom-pills">
-                  <button class="zoom-btn" onclick="zoomChart('{sym}', -6)" title="Zoom In (+)">➕</button>
-                  <button class="zoom-btn" onclick="zoomChart('{sym}', 6)" title="Zoom Out (−)">➖</button>
-                  <button class="zoom-btn" onclick="resetZoom('{sym}')" title="Reset Zoom & Pan">⟲</button>
-                </div>
-                <div class="chart-legend">
-                  <span class="legend-item"><span class="legend-dot" style="background:#38bdf8;"></span>EMA9</span>
-                  <span class="legend-item"><span class="legend-dot" style="background:#f59e0b;"></span>EMA21</span>
-                  <span class="legend-item"><span class="legend-dot" style="background:#a855f7;"></span>ADX</span>
-                </div>
-              </div>
-
-              <!-- Interactive Canvas Chart -->
-              <div class="chart-container" id="chart-wrap-{sym}">
-                <div class="chart-info-bar" id="info-{sym}">Loading candles...</div>
-                <canvas id="chart-{sym}" class="market-chart"></canvas>
               </div>
 
               <div class="market-ind">{ind}</div>
@@ -1343,123 +1362,6 @@ class TelemetryHandler(BaseHTTPRequestHandler):
       font-size: 17px;
       font-weight: 700;
       font-family: 'JetBrains Mono', monospace;
-    }}
-    .chart-controls {{
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 6px;
-      margin-top: 2px;
-      margin-bottom: 6px;
-      flex-wrap: wrap;
-    }}
-    .tf-pills {{
-      display: flex;
-      gap: 3px;
-      background: #090e1a;
-      padding: 2px;
-      border-radius: 6px;
-      border: 1px solid #1e293b;
-    }}
-    .tf-btn {{
-      background: transparent;
-      border: none;
-      color: #94a3b8;
-      font-size: 11px;
-      font-weight: 600;
-      padding: 2px 7px;
-      border-radius: 4px;
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }}
-    .tf-btn:hover {{
-      color: #f1f5f9;
-      background: rgba(255,255,255,0.05);
-    }}
-    .tf-btn.active {{
-      background: #1e293b;
-      color: #38bdf8;
-      box-shadow: 0 1px 2px rgba(0,0,0,0.3);
-    }}
-    .zoom-pills {{
-      display: flex;
-      gap: 2px;
-      background: #090e1a;
-      padding: 2px;
-      border-radius: 6px;
-      border: 1px solid #1e293b;
-    }}
-    .zoom-btn {{
-      background: transparent;
-      border: none;
-      color: #94a3b8;
-      font-size: 10px;
-      font-weight: 600;
-      padding: 2px 5px;
-      border-radius: 4px;
-      cursor: pointer;
-      transition: all 0.15s ease;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-    }}
-    .zoom-btn:hover {{
-      color: #38bdf8;
-      background: rgba(56, 189, 248, 0.15);
-    }}
-    .chart-legend {{
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 10px;
-      font-family: 'JetBrains Mono', monospace;
-    }}
-    .legend-item {{
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      color: #94a3b8;
-    }}
-    .legend-dot {{
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      display: inline-block;
-    }}
-    .chart-container {{
-      position: relative;
-      width: 100%;
-      height: 195px;
-      background: #060a12;
-      border: 1px solid #1e293b;
-      border-radius: 8px;
-      overflow: hidden;
-      margin-bottom: 6px;
-    }}
-    .market-chart {{
-      width: 100%;
-      height: 100%;
-      display: block;
-      cursor: crosshair;
-    }}
-    .chart-info-bar {{
-      position: absolute;
-      top: 3px;
-      left: 6px;
-      right: 6px;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 10px;
-      color: #94a3b8;
-      pointer-events: none;
-      display: flex;
-      justify-content: space-between;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      z-index: 2;
-      background: rgba(6, 10, 18, 0.75);
-      padding: 2px 5px;
-      border-radius: 4px;
     }}
     .pct-badge {{
       font-size: 12px;
@@ -1857,386 +1759,23 @@ class TelemetryHandler(BaseHTTPRequestHandler):
   </div>
 
   <script>
-    const activeTfs = {{}};
-    const chartData = {{}};
-    const chartZoom = {{}}; // sym -> {{ count: 35, offset: 0 }}
-
-    function getZoomConfig(sym, total) {{
-      if (!chartZoom[sym]) {{
-        chartZoom[sym] = {{ count: Math.min(35, total || 35), offset: 0 }};
-      }}
-      return chartZoom[sym];
-    }}
-
-    function zoomChart(sym, delta) {{
-      const data = chartData[sym];
-      if (!data || !data.candles) return;
-      const total = data.candles.length;
-      const cfg = getZoomConfig(sym, total);
-      cfg.count = Math.max(10, Math.min(total, cfg.count + delta));
-      cfg.offset = Math.max(0, Math.min(total - cfg.count, cfg.offset));
-      renderCanvasChart(sym, data);
-    }}
-
-    function resetZoom(sym) {{
-      const data = chartData[sym];
-      if (!data || !data.candles) return;
-      const total = data.candles.length;
-      chartZoom[sym] = {{ count: Math.min(35, total), offset: 0 }};
-      renderCanvasChart(sym, data);
-    }}
-
-    function initCharts() {{
-      const cards = document.querySelectorAll('.market-card');
-      cards.forEach(card => {{
-        const sym = card.getAttribute('data-symbol');
-        if (!sym) return;
-        const savedTf = localStorage.getItem('tf_' + sym) || '60';
-        activeTfs[sym] = savedTf;
-        updateTfButtons(sym, savedTf);
-        setupCanvasEvents(sym);
-        loadChart(sym, savedTf);
-      }});
-    }}
-
-    function updateTfButtons(sym, tf) {{
-      const wrap = document.getElementById('tf-pills-' + sym);
-      if (!wrap) return;
-      wrap.querySelectorAll('.tf-btn').forEach(btn => {{
-        btn.classList.toggle('active', btn.getAttribute('data-tf') === tf);
-      }});
-    }}
-
-    function changeChartTf(sym, tf) {{
-      activeTfs[sym] = tf;
-      localStorage.setItem('tf_' + sym, tf);
-      updateTfButtons(sym, tf);
-      loadChart(sym, tf);
-    }}
-
-    async function loadChart(sym, tf) {{
-      const info = document.getElementById('info-' + sym);
+    // Live 24h % movement updater
+    async function updateTickers() {{
       try {{
-        const res = await fetch(`/api/candles?symbol=${{sym}}&interval=${{tf}}&limit=80`);
-        if (!res.ok) throw new Error('API error');
+        const res = await fetch('/api/tickers');
+        if (!res.ok) return;
         const data = await res.json();
-        if (!data.candles || data.candles.length === 0) {{
-          if (info) info.textContent = 'No candle data';
-          return;
+        if (!data || !data.tickers) return;
+        for (const [sym, pct] of Object.entries(data.tickers)) {{
+          const el = document.getElementById('pct-' + sym);
+          if (el && pct !== null && pct !== undefined) {{
+            el.textContent = (pct >= 0 ? '+' : '') + Number(pct).toFixed(2) + '%';
+            el.className = 'pct-badge ' + (pct >= 0 ? 'up' : 'down');
+          }}
         }}
-        chartData[sym] = data;
-
-        // Update movement % badge
-        const pctBadge = document.getElementById('pct-' + sym);
-        if (pctBadge) {{
-          const chg = data.change_pct || 0;
-          pctBadge.textContent = (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%';
-          pctBadge.className = 'pct-badge ' + (chg >= 0 ? 'up' : 'down');
-        }}
-
-        renderCanvasChart(sym, data);
-      }} catch (e) {{
-        if (info) info.textContent = 'Chart load error';
-      }}
+      }} catch (e) {{}}
     }}
-
-    function renderCanvasChart(sym, data, hoverIdx = -1) {{
-      const canvas = document.getElementById('chart-' + sym);
-      const info = document.getElementById('info-' + sym);
-      if (!canvas) return;
-
-      const ctx = canvas.getContext('2d');
-      const rect = canvas.getBoundingClientRect();
-      const w = rect.width;
-      const h = rect.height || 195;
-      const dpr = window.devicePixelRatio || 1;
-
-      canvas.width = Math.floor(w * dpr);
-      canvas.height = Math.floor(h * dpr);
-      ctx.resetTransform();
-      ctx.scale(dpr, dpr);
-
-      const allCandles = data.candles;
-      if (!allCandles || allCandles.length === 0) return;
-
-      const total = allCandles.length;
-      const cfg = getZoomConfig(sym, total);
-      const count = Math.max(10, Math.min(total, cfg.count));
-      const offset = Math.max(0, Math.min(total - count, cfg.offset));
-      const startIdx = total - offset - count;
-      const endIdx = total - offset;
-      const candles = allCandles.slice(startIdx, endIdx);
-
-      const topH = Math.floor(h * 0.70);
-      const botH = h - topH;
-      const rightMargin = 48;
-      const plotW = w - rightMargin;
-      const n = candles.length;
-      const slotW = plotW / n;
-      const candleW = Math.max(2, Math.min(10, slotW * 0.68));
-
-      // Calculate price bounds (candles + EMAs)
-      let minP = Infinity, maxP = -Infinity;
-      candles.forEach(c => {{
-        minP = Math.min(minP, c.l);
-        maxP = Math.max(maxP, c.h);
-        if (c.ema9) {{ minP = Math.min(minP, c.ema9); maxP = Math.max(maxP, c.ema9); }}
-        if (c.ema21) {{ minP = Math.min(minP, c.ema21); maxP = Math.max(maxP, c.ema21); }}
-      }});
-      const pPad = (maxP - minP) * 0.08 || 1;
-      minP -= pPad; maxP += pPad;
-
-      function yP(p) {{
-        return topH - ((p - minP) / (maxP - minP)) * (topH - 22) - 10;
-      }}
-
-      // ADX bounds (0 to 60)
-      let maxAdx = 55;
-      candles.forEach(c => {{ if (c.adx) maxAdx = Math.max(maxAdx, c.adx); }});
-      maxAdx = Math.min(100, Math.ceil(maxAdx / 10) * 10);
-
-      function yA(a) {{
-        return h - ((a - 0) / maxAdx) * (botH - 12) - 4;
-      }}
-
-      // 1. Draw horizontal grid lines & price labels
-      ctx.lineWidth = 1;
-      ctx.font = '9px JetBrains Mono, monospace';
-      ctx.fillStyle = '#64748b';
-      ctx.textAlign = 'left';
-
-      const gridSteps = 3;
-      for (let i = 0; i <= gridSteps; i++) {{
-        const gVal = minP + (maxP - minP) * (i / gridSteps);
-        const gy = yP(gVal);
-        ctx.strokeStyle = '#151f32';
-        ctx.beginPath();
-        ctx.moveTo(0, gy);
-        ctx.lineTo(plotW, gy);
-        ctx.stroke();
-
-        const pLabel = gVal >= 1000 ? gVal.toFixed(0) : (gVal >= 10 ? gVal.toFixed(2) : gVal.toFixed(3));
-        ctx.fillText(pLabel, plotW + 5, gy + 3);
-      }}
-
-      // 2. Draw Candlesticks
-      candles.forEach((c, i) => {{
-        const cx = i * slotW + slotW / 2;
-        const isUp = c.c >= c.o;
-        const col = isUp ? '#10b981' : '#ef4444';
-
-        ctx.strokeStyle = col;
-        ctx.lineWidth = 1.2;
-        ctx.beginPath();
-        ctx.moveTo(cx, yP(c.h));
-        ctx.lineTo(cx, yP(c.l));
-        ctx.stroke();
-
-        const yOpen = yP(c.o);
-        const yClose = yP(c.c);
-        const bodyTop = Math.min(yOpen, yClose);
-        const bodyH = Math.max(1.5, Math.abs(yOpen - yClose));
-        ctx.fillStyle = col;
-        ctx.fillRect(cx - candleW / 2, bodyTop, candleW, bodyH);
-      }});
-
-      // 3. Draw EMA 9 line (Cyan)
-      ctx.strokeStyle = '#38bdf8';
-      ctx.lineWidth = 1.6;
-      ctx.beginPath();
-      let started = false;
-      candles.forEach((c, i) => {{
-        if (c.ema9 != null) {{
-          const cx = i * slotW + slotW / 2;
-          const cy = yP(c.ema9);
-          if (!started) {{ ctx.moveTo(cx, cy); started = true; }}
-          else ctx.lineTo(cx, cy);
-        }}
-      }});
-      ctx.stroke();
-
-      // 4. Draw EMA 21 line (Orange)
-      ctx.strokeStyle = '#f59e0b';
-      ctx.lineWidth = 1.6;
-      ctx.beginPath();
-      started = false;
-      candles.forEach((c, i) => {{
-        if (c.ema21 != null) {{
-          const cx = i * slotW + slotW / 2;
-          const cy = yP(c.ema21);
-          if (!started) {{ ctx.moveTo(cx, cy); started = true; }}
-          else ctx.lineTo(cx, cy);
-        }}
-      }});
-      ctx.stroke();
-
-      // 5. Draw ADX Sub-Panel
-      ctx.strokeStyle = '#1e293b';
-      ctx.beginPath();
-      ctx.moveTo(0, topH);
-      ctx.lineTo(w, topH);
-      ctx.stroke();
-
-      // ADX 25 threshold line
-      const y25 = yA(25);
-      ctx.setLineDash([3, 3]);
-      ctx.strokeStyle = '#475569';
-      ctx.beginPath();
-      ctx.moveTo(0, y25);
-      ctx.lineTo(plotW, y25);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillStyle = '#64748b';
-      ctx.fillText('25', plotW + 5, y25 + 3);
-
-      // ADX line (Purple)
-      ctx.beginPath();
-      let adxStarted = false;
-      candles.forEach((c, i) => {{
-        if (c.adx != null) {{
-          const cx = i * slotW + slotW / 2;
-          const cy = yA(c.adx);
-          if (!adxStarted) {{ ctx.moveTo(cx, cy); adxStarted = true; }}
-          else ctx.lineTo(cx, cy);
-        }}
-      }});
-      ctx.strokeStyle = '#a855f7';
-      ctx.lineWidth = 1.6;
-      ctx.stroke();
-
-      // 6. Crosshair & Hover Tooltip
-      const selIdx = (hoverIdx >= 0 && hoverIdx < n) ? hoverIdx : (n - 1);
-      const sel = candles[selIdx];
-      if (sel && info) {{
-        const dirCol = sel.c >= sel.o ? '#10b981' : '#ef4444';
-        const f9 = sel.ema9 ? sel.ema9.toFixed(1) : '--';
-        const f21 = sel.ema21 ? sel.ema21.toFixed(1) : '--';
-        const ax = sel.adx ? sel.adx.toFixed(1) : '--';
-        const panned = offset > 0 ? `<b style="color:#f59e0b">PAST(-${{offset}})</b> ` : '';
-        info.innerHTML = `<span>${{panned}}<b>${{sel.ts}}</b> <b style="color:${{dirCol}}">C:${{sel.c}}</b> O:${{sel.o}} H:${{sel.h}} L:${{sel.l}}</span>` +
-                         `<span><b style="color:#38bdf8">EMA9:${{f9}}</b> <b style="color:#f59e0b">EMA21:${{f21}}</b> <b style="color:#a855f7">ADX:${{ax}}</b> <small style="color:#64748b;">[${{n}}b ↕zoom↔pan]</small></span>`;
-      }}
-
-      if (hoverIdx >= 0 && hoverIdx < n) {{
-        const hx = hoverIdx * slotW + slotW / 2;
-        ctx.setLineDash([2, 2]);
-        ctx.strokeStyle = '#94a3b8';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(hx, 0);
-        ctx.lineTo(hx, h);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }}
-    }}
-
-    function setupCanvasEvents(sym) {{
-      const canvas = document.getElementById('chart-' + sym);
-      if (!canvas) return;
-
-      let isDragging = false;
-      let dragStartX = 0;
-      let dragStartOffset = 0;
-
-      // 1. Mouse wheel zoom
-      canvas.addEventListener('wheel', (e) => {{
-        e.preventDefault();
-        zoomChart(sym, e.deltaY > 0 ? 5 : -5);
-      }}, {{ passive: false }});
-
-      // 2. Click & drag to pan
-      canvas.addEventListener('mousedown', (e) => {{
-        if (e.button !== 0) return;
-        isDragging = true;
-        dragStartX = e.clientX;
-        const total = chartData[sym]?.candles?.length || 35;
-        dragStartOffset = getZoomConfig(sym, total).offset;
-        canvas.style.cursor = 'grabbing';
-      }});
-
-      window.addEventListener('mouseup', () => {{
-        if (isDragging) {{
-          isDragging = false;
-          canvas.style.cursor = 'crosshair';
-        }}
-      }});
-
-      canvas.addEventListener('mousemove', (e) => {{
-        const data = chartData[sym];
-        if (!data || !data.candles) return;
-        const total = data.candles.length;
-        const cfg = getZoomConfig(sym, total);
-        const rect = canvas.getBoundingClientRect();
-        const plotW = rect.width - 48;
-        const slotW = plotW / cfg.count;
-
-        if (isDragging) {{
-          const deltaX = e.clientX - dragStartX;
-          const shift = Math.round(deltaX / Math.max(4, slotW));
-          cfg.offset = Math.max(0, Math.min(total - cfg.count, dragStartOffset + shift));
-          renderCanvasChart(sym, data);
-          return;
-        }}
-
-        const x = e.clientX - rect.left;
-        const idx = Math.floor((x / plotW) * cfg.count);
-        renderCanvasChart(sym, data, Math.max(0, Math.min(cfg.count - 1, idx)));
-      }});
-
-      canvas.addEventListener('mouseleave', () => {{
-        if (!isDragging) {{
-          const data = chartData[sym];
-          if (data) renderCanvasChart(sym, data, -1);
-        }}
-      }});
-
-      // 3. Touch support (drag & pan)
-      let touchStartX = 0;
-      let touchStartOffset = 0;
-      canvas.addEventListener('touchstart', (e) => {{
-        if (e.touches.length === 1) {{
-          touchStartX = e.touches[0].clientX;
-          const total = chartData[sym]?.candles?.length || 35;
-          touchStartOffset = getZoomConfig(sym, total).offset;
-        }}
-      }}, {{ passive: true }});
-
-      canvas.addEventListener('touchmove', (e) => {{
-        const data = chartData[sym];
-        if (!data || !data.candles || e.touches.length !== 1) return;
-        const total = data.candles.length;
-        const cfg = getZoomConfig(sym, total);
-        const rect = canvas.getBoundingClientRect();
-        const plotW = rect.width - 48;
-        const slotW = plotW / cfg.count;
-        const deltaX = e.touches[0].clientX - touchStartX;
-        if (Math.abs(deltaX) > 8) {{
-          const shift = Math.round(deltaX / Math.max(4, slotW));
-          cfg.offset = Math.max(0, Math.min(total - cfg.count, touchStartOffset + shift));
-          renderCanvasChart(sym, data);
-        }}
-      }}, {{ passive: true }});
-
-      canvas.addEventListener('touchend', () => {{
-        const data = chartData[sym];
-        if (data) renderCanvasChart(sym, data, -1);
-      }});
-    }}
-
-    // Initialize charts on window load
-    window.addEventListener('DOMContentLoaded', initCharts);
-    window.addEventListener('resize', () => {{
-      Object.keys(chartData).forEach(sym => {{
-        if (chartData[sym]) renderCanvasChart(sym, chartData[sym]);
-      }});
-    }});
-
-    // Refresh charts every 15s in background
-    setInterval(() => {{
-      Object.keys(activeTfs).forEach(sym => {{
-        loadChart(sym, activeTfs[sym]);
-      }});
-    }}, 15000);
+    setInterval(updateTickers, 10000);
 
     function switchTradeTab(tab) {{
       const csvBtn = document.getElementById('trade-tab-csv');

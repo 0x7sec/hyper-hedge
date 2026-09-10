@@ -87,6 +87,9 @@ class BybitTradingEngine:
         self.ws: Optional[WebSocket] = None
         self.last_ws_msg_time: float = 0.0
         self.last_ws_reconnect_time: float = 0.0
+        self.wallet_summary: Dict[str, Any] = {}
+        self.exchange_pnl_summary: Dict[str, Any] = {}
+        self.last_account_fetch_ts: float = 0.0
 
         self._init_csv()
 
@@ -542,13 +545,28 @@ class BybitTradingEngine:
                 s = p.short_leg.pnl(px)[0] if p.short_leg else Decimal("0")
                 tot_open += (l + s)
 
+        # Refresh real account balance and exchange closed PnL periodically (every 10s)
+        now_ts = time.time()
+        if now_ts - self.last_account_fetch_ts >= 10.0:
+            try:
+                self.wallet_summary = self.service.get_wallet_summary()
+                self.exchange_pnl_summary = self.service.get_exchange_closed_pnl_summary(limit=100)
+                self.last_account_fetch_ts = now_ts
+            except Exception as e:
+                logger.debug(f"Account data refresh error: {e}")
+
+        eq = self.wallet_summary.get("total_equity", Decimal("1000.00"))
+        avail = self.wallet_summary.get("available_balance", Decimal("1000.00"))
+        hist_pnl = self.exchange_pnl_summary.get("total_realized_pnl", cum_all)
+
         # Print clean status report with clear visual separation
         console.print(f"\n[bold cyan]--- [SCAN #{self.scan_count} @ {now_str}] ----------------------------------------------[/bold cyan]")
         for line in report_lines:
             console.print(line)
         console.print(
             f"  [cyan]Portfolio:[/cyan] {active_count}/{self.config.max_concurrent_pairs} Active Pairs | "
-            f"Open PnL: ${tot_open:+.2f} | Realized PnL: ${cum_all:+.2f}"
+            f"Open PnL: ${tot_open:+.2f} | Realized PnL: ${hist_pnl:+.2f} | "
+            f"Equity: ${eq:,.2f} (Avail: ${avail:,.2f})"
         )
         self._dump_state_json()
 
@@ -616,6 +634,14 @@ class BybitTradingEngine:
 
                 pairs_dict[sym] = p_data
 
+            eq = float(self.wallet_summary.get("total_equity", Decimal("1000.00")))
+            wb = float(self.wallet_summary.get("wallet_balance", Decimal("1000.00")))
+            avail = float(self.wallet_summary.get("available_balance", Decimal("1000.00")))
+            hist_pnl = float(self.exchange_pnl_summary.get("total_realized_pnl", cum_all))
+            by_sym = {k: float(v) for k, v in self.exchange_pnl_summary.get("by_symbol", {}).items()}
+            trades_cnt = self.exchange_pnl_summary.get("total_trades", 0)
+            recent_trades = self.exchange_pnl_summary.get("recent_trades", [])
+
             state = {
                 "timestamp": datetime.now().isoformat(),
                 "uptime_seconds": int((datetime.now() - self.session_start).total_seconds()),
@@ -626,7 +652,15 @@ class BybitTradingEngine:
                 "max_concurrent_pairs": self.config.max_concurrent_pairs,
                 "active_pairs_count": sum(1 for p in self.pairs.values() if p.status == "ACTIVE"),
                 "open_pnl": float(tot_open),
-                "realized_pnl": float(cum_all),
+                "realized_pnl": hist_pnl,
+                "session_realized_pnl": float(cum_all),
+                "account_equity": eq,
+                "wallet_balance": wb,
+                "available_balance": avail,
+                "exchange_realized_pnl": hist_pnl,
+                "exchange_pnl_by_symbol": by_sym,
+                "total_trades_count": trades_cnt,
+                "exchange_recent_trades": recent_trades[:25],
                 "pairs": pairs_dict,
             }
 

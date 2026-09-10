@@ -224,20 +224,105 @@ class BybitService:
         except Exception:
             return Decimal("1000.00")
 
-    def get_last_closed_pnl(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """Fetch the most recent closed PnL record from Bybit for this symbol."""
+    def get_wallet_summary(self) -> Dict[str, Any]:
+        """Fetch comprehensive Unified Account wallet balance and equity details."""
         if self.is_dry_run:
-            return None
+            return {
+                "total_equity": Decimal("1000.00"),
+                "wallet_balance": Decimal("1000.00"),
+                "available_balance": Decimal("1000.00"),
+                "cum_realised_pnl": Decimal("0.00"),
+            }
         try:
-            res = self.session.get_closed_pnl(category="linear", symbol=symbol, limit=2)
+            res = self.session.get_wallet_balance(accountType="UNIFIED")
             if res.get("retCode") == 0:
-                p_list = res.get("result", {}).get("list", [])
-                if p_list:
-                    return p_list[0]
-            return None
+                acc = res.get("result", {}).get("list", [{}])[0]
+                tot_eq = Decimal(str(acc.get("totalEquity", "0") or "0"))
+                tot_wb = Decimal(str(acc.get("totalWalletBalance", "0") or "0"))
+                tot_avail = Decimal(str(acc.get("totalAvailableBalance", "0") or "0"))
+
+                coins = acc.get("coin", [])
+                cum_rpnl = Decimal("0")
+                for c in coins:
+                    if c.get("coin") == "USDT":
+                        cum_rpnl = Decimal(str(c.get("cumRealisedPnl", "0") or "0"))
+                        break
+                return {
+                    "total_equity": tot_eq,
+                    "wallet_balance": tot_wb,
+                    "available_balance": tot_avail,
+                    "cum_realised_pnl": cum_rpnl,
+                }
+            return {
+                "total_equity": Decimal("1000.00"),
+                "wallet_balance": Decimal("1000.00"),
+                "available_balance": Decimal("1000.00"),
+                "cum_realised_pnl": Decimal("0.00"),
+            }
         except Exception as e:
-            logger.debug(f"[{symbol}] get_closed_pnl error: {e}")
-            return None
+            logger.debug(f"get_wallet_summary error: {e}")
+            return {
+                "total_equity": Decimal("1000.00"),
+                "wallet_balance": Decimal("1000.00"),
+                "available_balance": Decimal("1000.00"),
+                "cum_realised_pnl": Decimal("0.00"),
+            }
+
+    def get_exchange_closed_pnl_summary(self, limit: int = 100) -> Dict[str, Any]:
+        """
+        Fetch all closed position PnL records from Bybit trade history,
+        calculating exact historical realized PnL across all pairs and by-symbol.
+        """
+        if self.is_dry_run:
+            return {
+                "total_realized_pnl": Decimal("0.00"),
+                "by_symbol": {},
+                "total_trades": 0,
+                "recent_trades": [],
+            }
+        try:
+            res = self.session.get_closed_pnl(category="linear", limit=limit)
+            if res.get("retCode") == 0:
+                trades = res.get("result", {}).get("list", [])
+                total_pnl = Decimal("0")
+                by_sym: Dict[str, Decimal] = {}
+                recent_formatted = []
+                for t in trades:
+                    sym = t.get("symbol", "")
+                    pnl = Decimal(str(t.get("closedPnl", "0") or "0"))
+                    total_pnl += pnl
+                    by_sym[sym] = by_sym.get(sym, Decimal("0")) + pnl
+
+                    recent_formatted.append({
+                        "symbol": sym,
+                        "side": t.get("side", ""),
+                        "qty": float(t.get("qty", 0)),
+                        "entry_price": float(t.get("avgEntryPrice", 0)),
+                        "exit_price": float(t.get("avgExitPrice", 0)),
+                        "closed_pnl": float(pnl),
+                        "exec_fee": float(t.get("execFee", 0)),
+                        "updated_time": int(t.get("updatedTime", 0)),
+                    })
+                return {
+                    "total_realized_pnl": total_pnl,
+                    "by_symbol": by_sym,
+                    "total_trades": len(trades),
+                    "recent_trades": recent_formatted,
+                }
+            return {
+                "total_realized_pnl": Decimal("0.00"),
+                "by_symbol": {},
+                "total_trades": 0,
+                "recent_trades": [],
+            }
+        except Exception as e:
+            logger.debug(f"get_exchange_closed_pnl_summary error: {e}")
+            return {
+                "total_realized_pnl": Decimal("0.00"),
+                "by_symbol": {},
+                "total_trades": 0,
+                "recent_trades": [],
+            }
 
     # -- Order execution -------------------------------------------------------
 

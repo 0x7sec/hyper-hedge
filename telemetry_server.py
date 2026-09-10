@@ -28,9 +28,84 @@ try:
 except ImportError:
     compute_indicators = None
 
+try:
+    from pybit.unified_trading import HTTP as BybitHTTP
+except ImportError:
+    BybitHTTP = None
+
 # In-memory candle cache: { (symbol, interval, limit): (timestamp, data) }
 CANDLE_CACHE = {}
 CANDLE_CACHE_TTL = 8.0  # seconds
+
+BYBIT_ACC_CACHE = {}
+BYBIT_ACC_CACHE_TTL = 10.0  # seconds
+
+
+def fetch_bybit_account_and_trades() -> dict:
+    """Fetch live Unified Account balance, equity, and closed position PnL history from Bybit."""
+    now = time.time()
+    if "acc" in BYBIT_ACC_CACHE:
+        cached_ts, cached_data = BYBIT_ACC_CACHE["acc"]
+        if now - cached_ts < BYBIT_ACC_CACHE_TTL:
+            return cached_data
+
+    api_key = os.environ.get("BYBIT_API_KEY", "")
+    api_secret = os.environ.get("BYBIT_API_SECRET", "")
+    testnet = os.environ.get("TESTNET", "true").lower() in ["1", "true", "yes"]
+
+    res_data = {
+        "equity": 0.0,
+        "wallet_balance": 0.0,
+        "available_balance": 0.0,
+        "total_realized_pnl": 0.0,
+        "by_symbol": {},
+        "trades_count": 0,
+        "recent_trades": [],
+    }
+
+    if not BybitHTTP or not api_key or not api_secret:
+        return res_data
+
+    try:
+        session = BybitHTTP(testnet=testnet, api_key=api_key, api_secret=api_secret)
+        wb = session.get_wallet_balance(accountType="UNIFIED")
+        if wb.get("retCode") == 0:
+            acc = wb.get("result", {}).get("list", [{}])[0]
+            res_data["equity"] = float(acc.get("totalEquity", 0) or 0)
+            res_data["wallet_balance"] = float(acc.get("totalWalletBalance", 0) or 0)
+            res_data["available_balance"] = float(acc.get("totalAvailableBalance", 0) or 0)
+
+        cpnl = session.get_closed_pnl(category="linear", limit=100)
+        if cpnl.get("retCode") == 0:
+            trades = cpnl.get("result", {}).get("list", [])
+            total_pnl = sum(float(t.get("closedPnl", 0) or 0) for t in trades)
+            by_sym = {}
+            formatted = []
+            for t in trades:
+                sym = t.get("symbol", "")
+                pnl = float(t.get("closedPnl", 0) or 0)
+                by_sym[sym] = by_sym.get(sym, 0.0) + pnl
+                ts_ms = int(t.get("updatedTime", 0) or 0)
+                formatted.append({
+                    "timestamp": datetime.fromtimestamp(ts_ms / 1000).strftime("%Y-%m-%d %H:%M:%S") if ts_ms else "",
+                    "symbol": sym,
+                    "side": t.get("side", ""),
+                    "qty": float(t.get("qty", 0) or 0),
+                    "entry_price": float(t.get("avgEntryPrice", 0) or 0),
+                    "exit_price": float(t.get("avgExitPrice", 0) or 0),
+                    "closed_pnl": pnl,
+                    "exec_fee": float(t.get("execFee", 0) or 0),
+                })
+            res_data["total_realized_pnl"] = round(total_pnl, 2)
+            res_data["by_symbol"] = {k: round(v, 2) for k, v in by_sym.items()}
+            res_data["trades_count"] = len(trades)
+            res_data["recent_trades"] = formatted
+
+        BYBIT_ACC_CACHE["acc"] = (now, res_data)
+    except Exception:
+        pass
+
+    return res_data
 
 
 def fetch_candles_with_indicators(symbol: str, interval: str = "60", limit: int = 80) -> dict:
@@ -404,9 +479,26 @@ class TelemetryHandler(BaseHTTPRequestHandler):
     def _handle_api_status(self):
         state = read_bot_state()
         svc = get_service_status()
+        acc = fetch_bybit_account_and_trades()
+
+        equity = state.get("account_equity") or acc.get("equity", 0.0)
+        avail = state.get("available_balance") or acc.get("available_balance", 0.0)
+        realized_pnl = state.get("exchange_realized_pnl") or acc.get("total_realized_pnl", 0.0)
+        sym_pnl = state.get("exchange_pnl_by_symbol") or acc.get("by_symbol", {})
+        trades_cnt = state.get("total_trades_count") or acc.get("trades_count", 0)
+        recent_trades = state.get("exchange_recent_trades") or acc.get("recent_trades", [])
+
         resp = {
             "server_time": datetime.now().isoformat(),
             "service": svc,
+            "account": {
+                "equity": equity,
+                "available_balance": avail,
+                "realized_pnl": realized_pnl,
+                "by_symbol": sym_pnl,
+                "total_trades": trades_cnt,
+            },
+            "recent_closed_trades": recent_trades[:25],
             "bot_state": state,
         }
         self._send_json(resp)
@@ -415,6 +507,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         """Generate high-signal, compact Markdown summary for AI Agents."""
         state = read_bot_state()
         svc = get_service_status()
+        acc = fetch_bybit_account_and_trades()
         trades = read_trade_history(limit=10)
         logs = get_systemd_logs(lines=15)
 
@@ -422,8 +515,14 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         uptime_str = f"{uptime_sec // 3600}h {(uptime_sec % 3600) // 60}m {uptime_sec % 60}s" if uptime_sec else "N/A"
 
         # Calculate trade statistics
-        total_pnl = state.get("realized_pnl", 0.0)
+        total_pnl = state.get("exchange_realized_pnl") or acc.get("total_realized_pnl", 0.0)
         open_pnl = state.get("open_pnl", 0.0)
+        equity = state.get("account_equity") or acc.get("equity", 0.0)
+        avail = state.get("available_balance") or acc.get("available_balance", 0.0)
+        sym_pnl = state.get("exchange_pnl_by_symbol") or acc.get("by_symbol", {})
+        trades_cnt = state.get("total_trades_count") or acc.get("trades_count", 0)
+        recent_exchange_trades = state.get("exchange_recent_trades") or acc.get("recent_trades", [])
+
         active_count = state.get("active_pairs_count", 0)
         max_pairs = state.get("max_concurrent_pairs", 3)
         network = state.get("network", "TESTNET")
@@ -433,7 +532,13 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         md.append(f"# Bybit Multi-Pair Bot: Live Telemetry Summary")
         md.append(f"**Timestamp**: `{datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}`  |  **Service**: `{svc.get('status', 'active').upper()}` (PID: {svc.get('pid', 'N/A')})")
         md.append(f"- **Network**: `{network}` | **Leverage**: `{leverage}x` | **Uptime**: `{uptime_str}` | **Scans**: `{state.get('scan_count', 0)}`")
-        md.append(f"- **Portfolio Status**: `{active_count}/{max_pairs}` Pairs Active | **Open PnL**: `${open_pnl:+.2f}` | **Realized PnL**: `${total_pnl:+.2f}`")
+        if equity:
+            md.append(f"- **Account Equity**: `${equity:,.2f} USDT` | **Available Margin**: `${avail:,.2f} USDT`")
+        md.append(f"- **Realized PnL (Trade History)**: `${total_pnl:+.2f} USDT` across `{trades_cnt}` closed Bybit trades")
+        if sym_pnl:
+            sym_str = " | ".join([f"{k}: `${v:+.2f}`" for k, v in sym_pnl.items()])
+            md.append(f"- **Realized PnL by Symbol**: {sym_str}")
+        md.append(f"- **Portfolio Status**: `{active_count}/{max_pairs}` Pairs Active | **Open Floating PnL**: `${open_pnl:+.2f}`")
         md.append("")
 
         md.append("## Active Markets & Positions")
@@ -471,10 +576,13 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                     md.append("  * *No active legs (Scanning for EMA cross + ADX gating)*")
                 md.append("")
 
-        md.append("## Recent Closed Trades")
-        if not trades:
-            md.append("*No closed trades recorded in audit ledger yet.*")
-        else:
+        md.append("## Recent Closed Trades (Exchange Ledger)")
+        if recent_exchange_trades:
+            md.append("| Timestamp | Symbol | Side | Qty | Entry Price | Exit Price | Net Realized PnL |")
+            md.append("|:---:|:---:|:---:|:---:|:---:|:---:|:---:|")
+            for t in recent_exchange_trades[:8]:
+                md.append(f"| {t.get('timestamp','')} | **{t.get('symbol','')}** | {t.get('side','')} | {t.get('qty','')} | ${t.get('entry_price',0):,.2f} | ${t.get('exit_price',0):,.2f} | **${t.get('closed_pnl',0):+.2f}** |")
+        elif trades:
             md.append("| Timestamp | Symbol | Leg | Event | Price | Size | Net PnL |")
             md.append("|---|---|:---:|:---:|:---:|:---:|:---:|")
             for t in trades[:6]:
@@ -490,6 +598,8 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                     pnl_val = 0.0
                 size_val = t.get("size", "")
                 md.append(f"| {t.get('timestamp','')} | {t.get('symbol','')} | {leg_val} | {evt_val} | ${px_val:.2f} | {size_val} | ${pnl_val:+.2f} |")
+        else:
+            md.append("*No closed trades recorded yet.*")
         md.append("")
 
         md.append("## Recent System & Crash Logs (Last 15 Lines)")
@@ -654,6 +764,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
     def _render_dashboard(self) -> str:
         state = read_bot_state()
         svc = get_service_status()
+        acc = fetch_bybit_account_and_trades()
         trades = read_trade_history(limit=25)
         logs = get_systemd_logs(lines=80)
 
@@ -664,9 +775,14 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         uptime_sec = state.get("uptime_seconds", 0)
         uptime_str = f"{uptime_sec // 3600}h {(uptime_sec % 3600) // 60}m {uptime_sec % 60}s" if uptime_sec else "Running"
 
-        realized_pnl = state.get("realized_pnl", 0.0)
+        equity = state.get("account_equity") or acc.get("equity", 0.0)
+        avail_bal = state.get("available_balance") or acc.get("available_balance", 0.0)
+        realized_pnl = state.get("exchange_realized_pnl") or acc.get("total_realized_pnl", 0.0)
         open_pnl = state.get("open_pnl", 0.0)
         total_pnl = realized_pnl + open_pnl
+        sym_pnl = state.get("exchange_pnl_by_symbol") or acc.get("by_symbol", {})
+        trades_count = state.get("total_trades_count") or acc.get("trades_count", 0)
+        recent_exchange_trades = state.get("exchange_recent_trades") or acc.get("recent_trades", [])
 
         rpnl_color = "#10b981" if realized_pnl >= 0 else "#ef4444"
         opnl_color = "#10b981" if open_pnl >= 0 else "#ef4444"
@@ -754,7 +870,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
 
         markets_html = "\n".join(market_cards) if market_cards else '<div class="card" style="text-align:center; color:#64748b;">Engine initializing markets...</div>'
 
-        # Trade rows
+        # Trade rows from CSV
         trade_rows = []
         for t in trades:
             leg_val = t.get("leg") or t.get("leg_side", "")
@@ -778,7 +894,32 @@ class TelemetryHandler(BaseHTTPRequestHandler):
               <td>{size_val}</td>
               <td style="color:{col}; font-weight:600;">${pnl_val:+.2f}</td>
             </tr>""")
-        trades_html = "\n".join(trade_rows) if trade_rows else '<tr><td colspan="7" style="text-align:center; color:#64748b;">No trades executed yet</td></tr>'
+
+        # Fallback to Exchange trades if CSV is empty
+        exchange_trade_rows = []
+        for t in recent_exchange_trades:
+            pnl_val = float(t.get("closed_pnl", 0) or 0)
+            col = "#10b981" if pnl_val > 0 else ("#ef4444" if pnl_val < 0 else "#94a3b8")
+            side_badge = "long" if t.get("side", "").lower() in ["buy", "long"] else "short"
+            exchange_trade_rows.append(f"""<tr>
+              <td>{t.get('timestamp','')}</td>
+              <td><b>{t.get('symbol','')}</b></td>
+              <td><span class="badge {side_badge}">{t.get('side','')}</span></td>
+              <td>Closed PnL</td>
+              <td>${t.get('exit_price',0):,.2f}</td>
+              <td>{t.get('qty','')}</td>
+              <td style="color:{col}; font-weight:600;">${pnl_val:+.2f}</td>
+            </tr>""")
+
+        display_trade_rows = trade_rows if trade_rows else exchange_trade_rows
+        trades_html = "\n".join(display_trade_rows) if display_trade_rows else '<tr><td colspan="7" style="text-align:center; color:#64748b;">No trades executed yet</td></tr>'
+
+        # Symbol breakdown badges
+        badges = []
+        for s, val in sym_pnl.items():
+            b_col = "#10b981" if val >= 0 else "#ef4444"
+            badges.append(f'<span><b>{s}:</b> <span style="color:{b_col};">${val:+.2f}</span></span>')
+        pnl_by_symbol_badges = " &bull; ".join(badges) if badges else '<span style="color:#64748b;">Awaiting trade events...</span>'
 
         return f"""<!DOCTYPE html>
 <html lang="en">
@@ -1292,9 +1433,14 @@ class TelemetryHandler(BaseHTTPRequestHandler):
 
     <div class="stats-grid">
       <div class="card">
+        <div class="stat-title">Total Account Balance</div>
+        <div class="stat-val" style="color:#38bdf8;">${equity:,.2f}</div>
+        <div class="stat-sub">Available: ${avail_bal:,.2f} USDT</div>
+      </div>
+      <div class="card">
         <div class="stat-title">Realized Net Profit</div>
         <div class="stat-val" style="color:{rpnl_color}">${realized_pnl:+.2f}</div>
-        <div class="stat-sub">From closed hedge legs</div>
+        <div class="stat-sub">Across {trades_count} closed Bybit trades</div>
       </div>
       <div class="card">
         <div class="stat-title">Open Unrealized PnL</div>
@@ -1302,7 +1448,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         <div class="stat-sub">Active market floating</div>
       </div>
       <div class="card">
-        <div class="stat-title">Total Account Impact</div>
+        <div class="stat-title">Total Performance Impact</div>
         <div class="stat-val" style="color:{tpnl_color}">${total_pnl:+.2f}</div>
         <div class="stat-sub">Realized + Floating</div>
       </div>
@@ -1310,6 +1456,13 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         <div class="stat-title">System Uptime</div>
         <div class="stat-val" style="font-size: 18px; margin-top:4px;">{uptime_str}</div>
         <div class="stat-sub">Scans: {state.get('scan_count', 0)} | Leverage: {state.get('leverage', 4)}x</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:24px; padding:12px 18px; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; background:#0b1329;">
+      <div style="font-size:12px; font-weight:700; text-transform:uppercase; color:#94a3b8; letter-spacing:0.5px;">Bybit Realized P&L by Symbol:</div>
+      <div style="display:flex; flex-wrap:wrap; gap:14px; font-family:'JetBrains Mono', monospace; font-size:13px;">
+        {pnl_by_symbol_badges}
       </div>
     </div>
 

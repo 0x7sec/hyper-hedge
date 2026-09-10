@@ -954,12 +954,15 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         symbol = str(payload.get("symbol", "BTCUSDT")).upper()
         limit = int(payload.get("bars") or payload.get("limit") or 2000)
         custom_params = {}
-        for k in ["d_pct", "confirm_mult", "b1_tp_mult", "b2_tp_mult", "leverage"]:
+        for k in ["d_pct", "confirm_mult", "b1_tp_mult", "b2_tp_mult", "leverage", "use_dynamic_atr", "atr_mult", "adx_min", "hedge_ratio"]:
             if k in payload:
-                try:
-                    custom_params[k] = float(payload[k])
-                except (ValueError, TypeError):
-                    pass
+                if k == "use_dynamic_atr":
+                    custom_params[k] = bool(payload[k])
+                else:
+                    try:
+                        custom_params[k] = float(payload[k])
+                    except (ValueError, TypeError):
+                        pass
 
         try:
             candles = ReplayEngine.load_candles(symbol, limit=limit)

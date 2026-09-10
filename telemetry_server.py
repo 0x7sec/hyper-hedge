@@ -611,6 +611,9 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/research/optimize":
                 self._handle_api_research_optimize(payload)
                 return
+            elif parsed.path == "/api/research/download-bars":
+                self._handle_api_research_download_bars(payload)
+                return
             elif parsed.path == "/api/research/test/delete":
                 tid = payload.get("id") or payload.get("test_id")
                 if not tid:
@@ -703,7 +706,13 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                 "status": "ok",
                 "tests": list_test_runs(limit=limit, test_type=ttype),
             })
-
+        elif parsed.path == "/api/research/download-bars":
+            symbols_q = qs.get("symbols", ["BTCUSDT,ETHUSDT,SOLUSDT,PAXGUSDT"])[0]
+            bars_q = int(qs.get("bars", [8000])[0])
+            interval_q = qs.get("interval", ["60"])[0]
+            testnet_q = qs.get("testnet", ["0"])[0].lower() in ["1", "true", "yes"]
+            payload = {"symbols": symbols_q.split(","), "bars": bars_q, "interval": interval_q, "testnet": testnet_q}
+            self._handle_api_research_download_bars(payload)
         else:
             self.send_error(404, "Not Found")
 
@@ -1110,7 +1119,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             if ReplayEngine:
                 try:
                     candles = ReplayEngine.load_candles(symbol, limit=bars)
-                    engine = ReplayEngine(initial_capital=1000.0)
+                    engine = ReplayEngine(initial_capital=float(payload.get("initial_capital", 1000.0)))
                     res = engine.run_backtest(symbol, candles)
                     trade_pnls = [t.net_pnl for t in res.trades]
                 except Exception as e:
@@ -1272,6 +1281,39 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         except Exception as e:
             logger.error(f"Research Optimize API error: {e}", exc_info=True)
             self._send_json({"error": str(e)}, 500)
+
+    def _handle_api_research_download_bars(self, payload: dict):
+        """Handle POST or GET /api/research/download-bars to fetch latest continuous Kline data from Bybit."""
+        symbols_raw = payload.get("symbols", ["BTCUSDT", "ETHUSDT", "SOLUSDT", "PAXGUSDT"])
+        if isinstance(symbols_raw, str):
+            symbols = [s.strip().upper() for s in symbols_raw.split(",") if s.strip()]
+        else:
+            symbols = [str(s).strip().upper() for s in symbols_raw if str(s).strip()]
+
+        bars = int(payload.get("bars", 8000))
+        interval = str(payload.get("interval", "60"))
+        testnet = bool(payload.get("testnet", False))
+
+        try:
+            from scripts.download_latest_candles import download_candles_for_symbols
+            results = download_candles_for_symbols(
+                symbols=symbols,
+                bars=bars,
+                interval=interval,
+                out_dir="scratch",
+                testnet=testnet,
+            )
+            self._send_json({
+                "status": "ok",
+                "message": f"Successfully downloaded Kline data for {len(symbols)} symbols",
+                "bars_requested": bars,
+                "interval": interval,
+                "results": results,
+            })
+        except Exception as e:
+            logger.error(f"Download bars API error: {e}", exc_info=True)
+            self._send_json({"error": str(e)}, 500)
+
 
 
     def _build_ws_frame(self, payload_bytes: bytes) -> bytes:

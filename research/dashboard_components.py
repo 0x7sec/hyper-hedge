@@ -204,6 +204,21 @@ def get_research_css() -> str:
       background: #b45309;
       box-shadow: 0 0 12px rgba(251, 191, 36, 0.3);
     }
+    .btn-research-sync {
+      background: linear-gradient(135deg, #047857 0%, #065f46 100%);
+      color: #fff;
+      border: 1px solid #34d399;
+      padding: 9px 18px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-research-sync:hover {
+      background: #059669;
+      box-shadow: 0 0 12px rgba(52, 211, 153, 0.3);
+    }
     .rs-status-idle {
       margin-left: auto;
       font-size: 12px;
@@ -767,8 +782,9 @@ def get_research_html() -> str:
             <label>Historical Horizon</label>
             <select id="rs-bars">
               <option value="1000">1,000 Bars (~41 days)</option>
-              <option value="2000" selected>2,000 Bars (~83 days)</option>
+              <option value="2000">2,000 Bars (~83 days)</option>
               <option value="4000">4,000 Bars (~166 days)</option>
+              <option value="6280" selected>6,280 Bars (~8.6 months)</option>
               <option value="8000">8,000 Bars (~333 days)</option>
             </select>
           </div>
@@ -810,6 +826,9 @@ def get_research_html() -> str:
           </button>
           <button id="btn-run-opt" class="btn btn-research-amber" onclick="runResearchOptimize()">
             🧬 Run Jesse Walk-Forward Optimizer
+          </button>
+          <button id="btn-download-bars" class="btn btn-research-sync" onclick="downloadLatestBars()">
+            📥 Download Latest Bars
           </button>
           <button id="btn-saved-tests" class="btn btn-research-history" onclick="openSavedTestsModal()">
             📚 Saved Tests (<span id="saved-tests-count">0</span>)
@@ -1234,6 +1253,39 @@ def get_research_js() -> str:
       showRays: true,
       highlightedCycleId: null
     };
+
+    async function downloadLatestBars() {
+      const bars = parseInt(document.getElementById('rs-bars').value) || 8000;
+      const btn = document.getElementById('btn-download-bars');
+      if (btn) btn.disabled = true;
+      setResearchStatus('running', '⏳ Downloading latest Bybit klines (' + bars + ' bars)...');
+
+      try {
+        const res = await fetch('/api/research/download-bars', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            symbols: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'PAXGUSDT'],
+            bars: bars
+          })
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          let summaryParts = [];
+          for (const s in data.results) {
+            const r = data.results[s];
+            if (r.count) summaryParts.push(s + ': ' + r.count + ' bars');
+          }
+          setResearchStatus('idle', '✓ ' + summaryParts.join(' | '));
+        } else {
+          setResearchStatus('idle', '❌ Download failed: ' + (data.error || 'Unknown error'));
+        }
+      } catch (err) {
+        setResearchStatus('idle', '❌ Network error: ' + err.message);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
 
     async function runResearchBacktest() {
       const sym = document.getElementById('rs-symbol').value;

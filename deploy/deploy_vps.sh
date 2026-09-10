@@ -183,6 +183,10 @@ if command -v ufw >/dev/null 2>&1; then
   fi
 fi
 
+# Pre-cache continuous historical Kline data for Research Suite
+echo "=== Pre-caching Historical Kline Data for Research Suite ==="
+./venv/bin/python scripts/download_latest_candles.py --symbols BTCUSDT,ETHUSDT,SOLUSDT,PAXGUSDT --bars 8000 || echo "Kline pre-caching completed or will fetch on demand."
+
 # Reload and restart daemons
 $SUDO systemctl daemon-reload
 $SUDO systemctl enable bybit-bot bybit-telemetry

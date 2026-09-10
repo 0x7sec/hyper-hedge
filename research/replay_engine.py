@@ -225,15 +225,35 @@ class ReplayEngine:
                 except Exception as e:
                     logger.warning(f"Failed to load cache from {p}: {e}")
 
-        # Try fetching from Bybit REST API
+        # Try fetching from Bybit REST API with backward pagination
         try:
             from pybit.unified_trading import HTTP
+            import time as _time
             session = HTTP(testnet=False)
-            res = session.get_kline(category="linear", symbol=symbol, interval="60", limit=min(limit, 1000))
-            if res.get("retCode") == 0 and res.get("result", {}).get("list"):
-                raw_list = res["result"]["list"]
+            all_raw = []
+            end_time = None
+            remaining = limit
+            while remaining > 0:
+                batch_limit = min(remaining, 1000)
+                params = {"category": "linear", "symbol": symbol, "interval": "60", "limit": batch_limit}
+                if end_time is not None:
+                    params["endTime"] = end_time
+                res = session.get_kline(**params)
+                if res.get("retCode") != 0 or not res.get("result", {}).get("list"):
+                    break
+                batch = res["result"]["list"]
+                all_raw.extend(batch)
+                remaining -= len(batch)
+                if len(batch) < batch_limit:
+                    break
+                oldest_ts = int(batch[-1][0])
+                end_time = oldest_ts - 1
+                _time.sleep(0.04)
+
+            if all_raw:
+                all_raw.reverse()
                 candles = []
-                for item in reversed(raw_list):
+                for item in all_raw:
                     ts_ms = int(item[0])
                     candles.append({
                         "timestamp": ts_ms,
@@ -245,7 +265,15 @@ class ReplayEngine:
                         "volume": float(item[5]),
                     })
                 logger.info(f"Fetched {len(candles)} live Bybit 60m candles for {symbol}.")
-                return candles
+                # Cache locally for fast subsequent queries
+                os.makedirs("scratch", exist_ok=True)
+                cache_file = os.path.join("scratch", f"{sym_lower}_60m_cache.pkl")
+                try:
+                    with open(cache_file, "wb") as cf:
+                        pickle.dump(candles, cf)
+                except Exception:
+                    pass
+                return candles[-limit:] if len(candles) > limit else candles
         except Exception as e:
             logger.warning(f"Bybit API fetch failed for {symbol}: {e}")
 

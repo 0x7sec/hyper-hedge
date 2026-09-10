@@ -17,15 +17,18 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "adx_min": Decimal("15"),
         "adx_period": 14,
         "d_pct": Decimal("0.70"),
+        "use_dynamic_atr": True,
+        "atr_mult": Decimal("0.85"),
+        "exhaustion_mult": Decimal("1.50"),
         "confirm_mult": Decimal("0.80"),  # Confirm direction at 0.80D (reduces debt, widens runner)
         "sl_pct": Decimal("0.34"),        # Base Zero-Loss SL = +0.48D
-        "tp_pct": Decimal("1.96"),        # Branch 1 Take-Profit = +2.8D (0.70 * 2.8)
-        "b1_tp_mult": Decimal("2.80"),    # 2.8D Take-Profit on Branch 1
+        "tp_pct": Decimal("1.40"),        # Branch 1 Take-Profit = +2.0D (0.70 * 2.0)
+        "b1_tp_mult": Decimal("2.00"),    # 2.0D Take-Profit on Branch 1
         "b1_r1_trig": Decimal("1.40"),    # Stage 1 Ratchet trigger (+1.40D)
         "b1_r1_sl": Decimal("1.00"),      # Stage 1 SL raised to (+1.00D)
         "b1_r2_trig": Decimal("2.20"),    # Stage 2 Ratchet trigger (+2.20D)
         "b1_r2_sl": Decimal("1.70"),      # Stage 2 SL raised to (+1.70D)
-        "b2_tp_mult": Decimal("3.50"),    # 3.5D Take-Profit on Branch 2 for BTC
+        "b2_tp_mult": Decimal("2.00"),    # 2.0D Take-Profit on Branch 2 for BTC
         "b2_be_cushion": Decimal("0.10"), # Fast True BE Lock triggered at True BE + 0.10D
         "b2_r2_trig": Decimal("2.50"),    # Milestone 2 profit ratchet on B2 (2.50D)
         "b2_r2_sl": Decimal("2.10"),      # Milestone 2 SL raised to 2.10D (locks +0.65D net)
@@ -44,15 +47,18 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "adx_min": Decimal("0"),
         "adx_period": 14,
         "d_pct": Decimal("0.80"),
+        "use_dynamic_atr": True,
+        "atr_mult": Decimal("0.85"),
+        "exhaustion_mult": Decimal("1.50"),
         "confirm_mult": Decimal("0.80"),  # Confirm direction at 0.80D
         "sl_pct": Decimal("0.38"),        # Base Zero-Loss SL = +0.48D
-        "tp_pct": Decimal("2.24"),        # Branch 1 Take-Profit = +2.8D (0.80 * 2.8)
-        "b1_tp_mult": Decimal("2.80"),    # 2.8D Take-Profit on Branch 1
+        "tp_pct": Decimal("1.60"),        # Branch 1 Take-Profit = +2.0D (0.80 * 2.0)
+        "b1_tp_mult": Decimal("2.00"),    # 2.0D Take-Profit on Branch 1
         "b1_r1_trig": Decimal("1.40"),
         "b1_r1_sl": Decimal("1.00"),
         "b1_r2_trig": Decimal("2.20"),
         "b1_r2_sl": Decimal("1.70"),
-        "b2_tp_mult": Decimal("3.00"),    # 3.0D Take-Profit on Branch 2 for ETH
+        "b2_tp_mult": Decimal("2.00"),    # 2.0D Take-Profit on Branch 2 for ETH
         "b2_be_cushion": Decimal("0.10"),
         "b2_r2_trig": Decimal("2.50"),
         "b2_r2_sl": Decimal("2.10"),
@@ -71,15 +77,18 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "adx_min": Decimal("15"),         # ADX>15 filters flat ranges
         "adx_period": 14,
         "d_pct": Decimal("0.80"),
+        "use_dynamic_atr": True,
+        "atr_mult": Decimal("0.85"),
+        "exhaustion_mult": Decimal("1.50"),
         "confirm_mult": Decimal("0.80"),  # Confirm direction at 0.80D
         "sl_pct": Decimal("0.38"),        # Base Zero-Loss SL = +0.48D
-        "tp_pct": Decimal("2.24"),        # Branch 1 Take-Profit = +2.8D (0.80 * 2.8)
-        "b1_tp_mult": Decimal("2.80"),    # 2.8D Take-Profit on Branch 1
+        "tp_pct": Decimal("1.60"),        # Branch 1 Take-Profit = +2.0D (0.80 * 2.0)
+        "b1_tp_mult": Decimal("2.00"),    # 2.0D Take-Profit on Branch 1
         "b1_r1_trig": Decimal("1.40"),
         "b1_r1_sl": Decimal("1.00"),
         "b1_r2_trig": Decimal("2.20"),
         "b1_r2_sl": Decimal("1.70"),
-        "b2_tp_mult": Decimal("3.50"),    # 3.5D Take-Profit on Branch 2 for SOL
+        "b2_tp_mult": Decimal("2.00"),    # 2.0D Take-Profit on Branch 2 for SOL
         "b2_be_cushion": Decimal("0.10"),
         "b2_r2_trig": Decimal("2.50"),
         "b2_r2_sl": Decimal("2.10"),
@@ -98,15 +107,18 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "adx_min": Decimal("15"),
         "adx_period": 14,
         "d_pct": Decimal("0.40"),
+        "use_dynamic_atr": True,
+        "atr_mult": Decimal("0.85"),
+        "exhaustion_mult": Decimal("1.50"),
         "confirm_mult": Decimal("0.80"),
         "sl_pct": Decimal("0.40"),
-        "tp_pct": Decimal("1.12"),
-        "b1_tp_mult": Decimal("2.80"),
+        "tp_pct": Decimal("0.80"),
+        "b1_tp_mult": Decimal("2.00"),
         "b1_r1_trig": Decimal("1.40"),
         "b1_r1_sl": Decimal("1.00"),
         "b1_r2_trig": Decimal("2.20"),
         "b1_r2_sl": Decimal("1.70"),
-        "b2_tp_mult": Decimal("3.00"),
+        "b2_tp_mult": Decimal("2.00"),
         "b2_be_cushion": Decimal("0.10"),
         "b2_r2_trig": Decimal("2.50"),
         "b2_r2_sl": Decimal("2.10"),
@@ -130,11 +142,14 @@ class SymbolConfig:
     adx_min: Decimal = Decimal("0")
     adx_period: int = 14
     d_pct: Decimal = Decimal("0.80")
+    use_dynamic_atr: bool = True
+    atr_mult: Decimal = Decimal("0.85")
+    exhaustion_mult: Decimal = Decimal("1.50")
     confirm_mult: Decimal = Decimal("0.80")  # Confirm direction at 0.80D
     sl_pct: Decimal = Decimal("0.38")
-    tp_pct: Decimal = Decimal("2.24")
-    b1_tp_mult: Decimal = Decimal("2.80")    # 2.8D Take-Profit on Branch 1
-    b2_tp_mult: Decimal = Decimal("3.50")    # Branch 2 TP target
+    tp_pct: Decimal = Decimal("1.60")
+    b1_tp_mult: Decimal = Decimal("2.00")    # 2.0D Take-Profit on Branch 1
+    b2_tp_mult: Decimal = Decimal("2.00")    # Branch 2 TP target
     b1_r1_trig: Decimal = Decimal("1.40")    # Stage 1 Ratchet trigger (+1.40D)
     b1_r1_sl: Decimal = Decimal("1.00")      # Stage 1 SL raised to (+1.00D)
     b1_r2_trig: Decimal = Decimal("2.20")    # Stage 2 Ratchet trigger (+2.20D)
@@ -167,6 +182,14 @@ class SymbolConfig:
                 except Exception: pass
             if os.getenv(f"{pfx}D_PCT"):
                 try: params["d_pct"] = Decimal(os.getenv(f"{pfx}D_PCT"))
+                except Exception: pass
+            if os.getenv(f"{pfx}USE_DYNAMIC_ATR"):
+                params["use_dynamic_atr"] = os.getenv(f"{pfx}USE_DYNAMIC_ATR").lower() in ("true", "1", "yes")
+            if os.getenv(f"{pfx}ATR_MULT"):
+                try: params["atr_mult"] = Decimal(os.getenv(f"{pfx}ATR_MULT"))
+                except Exception: pass
+            if os.getenv(f"{pfx}EXHAUSTION_MULT"):
+                try: params["exhaustion_mult"] = Decimal(os.getenv(f"{pfx}EXHAUSTION_MULT"))
                 except Exception: pass
             if os.getenv(f"{pfx}CONFIRM_MULT"):
                 try: params["confirm_mult"] = Decimal(os.getenv(f"{pfx}CONFIRM_MULT"))

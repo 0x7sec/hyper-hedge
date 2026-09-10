@@ -25,6 +25,7 @@ CHAMPION_PROFILES: Dict[str, Dict[str, Any]] = {
         "d_pct": 0.70,
         "use_dynamic_atr": True,
         "atr_mult": 0.85,
+        "exhaustion_mult": 1.50,
         "confirm_mult": 0.80,
         "b1_tp_mult": 2.00,
         "b1_r1_trig": 1.40,
@@ -44,6 +45,7 @@ CHAMPION_PROFILES: Dict[str, Dict[str, Any]] = {
         "d_pct": 0.80,
         "use_dynamic_atr": True,
         "atr_mult": 0.85,
+        "exhaustion_mult": 1.50,
         "confirm_mult": 0.80,
         "b1_tp_mult": 2.00,
         "b1_r1_trig": 1.40,
@@ -63,6 +65,7 @@ CHAMPION_PROFILES: Dict[str, Dict[str, Any]] = {
         "d_pct": 0.80,
         "use_dynamic_atr": True,
         "atr_mult": 0.85,
+        "exhaustion_mult": 1.50,
         "confirm_mult": 0.80,
         "b1_tp_mult": 2.00,
         "b1_r1_trig": 1.40,
@@ -82,6 +85,7 @@ CHAMPION_PROFILES: Dict[str, Dict[str, Any]] = {
         "d_pct": 0.50,
         "use_dynamic_atr": True,
         "atr_mult": 0.85,
+        "exhaustion_mult": 1.50,
         "confirm_mult": 0.80,
         "b1_tp_mult": 2.00,
         "b1_r1_trig": 1.40,
@@ -388,6 +392,7 @@ class ReplayEngine:
         b2_be_cushion = float(prof["b2_be_cushion"])
         b2_r2_trig = float(prof["b2_r2_trig"])
         b2_r2_sl = float(prof["b2_r2_sl"])
+        exhaustion_mult = float(prof.get("exhaustion_mult", 1.50))
         adx_min = float(prof["adx_min"])
         timeout_bars = int(prof["timeout_bars"])
         hedge_ratio = float(prof["hedge_ratio"])
@@ -541,13 +546,14 @@ class ReplayEngine:
                                     # Gain required: |c_loss| + all roundtrip fees
                                     fee_buf = TAKER_FEE_RATE * 4.0
                                     primary_sl = p0 * (1.0 + (hedge_ratio * confirm_mult * d_val) + fee_buf)
-                                    primary_tp = confirm_px * (1.0 + 1.0 * d_val)
+                                    primary_tp = p0 * (1.0 + b1_tp_mult * d_val)
 
                                 # Check Branch 2 (-0.80D Trap)
                                 elif p <= p0 * (1.0 - confirm_mult * d_val):
                                     phase = "RUNNER_B2"
                                     confirm_px = p
-                                    b2_tp_level = confirm_px * (1.0 - 1.0 * d_val)
+                                    exhaustion_level = p0 * (1.0 - exhaustion_mult * d_val)
+                                    b2_tp_level = p0 * (1.0 - b2_tp_mult * d_val)
 
                                     # Collapse Trapped 100% Long
                                     t_loss = (confirm_px - p0) * primary_qty
@@ -557,8 +563,8 @@ class ReplayEngine:
                                     total_fees += t_fees
 
                                     # EXHAUSTION GUARD CHECK
-                                    if p <= b2_tp_level:
-                                        # Flash dump overshot Apex TP! Abort upsize, close 30% short for profit
+                                    if p <= exhaustion_level or p <= b2_tp_level:
+                                        # Flash dump overshot! Abort upsize, close 30% short for profit
                                         exhaustion_triggered = True
                                         c_gain = (p0 - p) * counter_qty
                                         c_fee = (counter_qty * p) * TAKER_FEE_RATE
@@ -576,10 +582,11 @@ class ReplayEngine:
                                         total_fees += upsize_fee
                                         # Blended Short Entry Price
                                         blended_b2_entry = (counter_qty * p0 + upsize_qty * confirm_px) / primary_qty
-                                        # True Breakeven SL: immediate stop loss placement
+                                        # True Breakeven Price: price level needed to cover trapped loss + all fees
                                         total_drain = abs(trapped_loss) + trapped_fees + upsize_fee + (primary_qty * blended_b2_entry * TAKER_FEE_RATE * 2.0)
                                         true_be_sl = blended_b2_entry - (total_drain / primary_qty)
-                                        primary_sl = true_be_sl  # Initial stop loss at True Breakeven immediately!
+                                        primary_sl = p0  # Initial stop loss at P0 (above current price)
+                                        b2_fast_be_locked = False
 
                             else:  # Bearish entry
                                 # Check Branch 1 (-0.80D Expansion down)
@@ -596,13 +603,14 @@ class ReplayEngine:
 
                                     fee_buf = TAKER_FEE_RATE * 4.0
                                     primary_sl = p0 * (1.0 - (hedge_ratio * confirm_mult * d_val) - fee_buf)
-                                    primary_tp = confirm_px * (1.0 - 1.0 * d_val)
+                                    primary_tp = p0 * (1.0 - b1_tp_mult * d_val)
 
                                 # Check Branch 2 (+0.80D Trap up)
                                 elif p >= p0 * (1.0 + confirm_mult * d_val):
                                     phase = "RUNNER_B2"
                                     confirm_px = p
-                                    b2_tp_level = confirm_px * (1.0 + 1.0 * d_val)
+                                    exhaustion_level = p0 * (1.0 + exhaustion_mult * d_val)
+                                    b2_tp_level = p0 * (1.0 + b2_tp_mult * d_val)
 
                                     # Collapse Trapped 100% Short
                                     t_loss = (p0 - confirm_px) * primary_qty
@@ -612,8 +620,8 @@ class ReplayEngine:
                                     total_fees += t_fees
 
                                     # EXHAUSTION GUARD CHECK
-                                    if p >= b2_tp_level:
-                                        # Flash pump overshot Apex TP!
+                                    if p >= exhaustion_level or p >= b2_tp_level:
+                                        # Flash pump overshot!
                                         exhaustion_triggered = True
                                         c_gain = (p - p0) * counter_qty
                                         c_fee = (counter_qty * p) * TAKER_FEE_RATE
@@ -632,7 +640,8 @@ class ReplayEngine:
                                         blended_b2_entry = (counter_qty * p0 + upsize_qty * confirm_px) / primary_qty
                                         total_drain = abs(trapped_loss) + trapped_fees + upsize_fee + (primary_qty * blended_b2_entry * TAKER_FEE_RATE * 2.0)
                                         true_be_sl = blended_b2_entry + (total_drain / primary_qty)
-                                        primary_sl = true_be_sl  # Initial stop loss at True Breakeven immediately!
+                                        primary_sl = p0  # Initial stop loss at P0 (below current price)
+                                        b2_fast_be_locked = False
 
                         # -------------------------------------------------------------
                         # 2. RUNNER BRANCH 1 (Signal was right)
@@ -647,10 +656,14 @@ class ReplayEngine:
                                     cycle_scenario = "SCENARIO_1_B1_TP"
                                     cycle_done = True
                                     break
-                                # Stage 1 Ratchet (+0.40D past confirm -> lock +1.0D)
-                                elif p >= confirm_px * (1.0 + 0.40 * d_val) and b1_ratchet_stage < 1:
+                                # Stage 2 Ratchet (+2.20D reached -> lock +1.70D)
+                                elif p >= p0 * (1.0 + b1_r2_trig * d_val) and b1_ratchet_stage < 2:
+                                    b1_ratchet_stage = 2
+                                    primary_sl = max(primary_sl, p0 * (1.0 + b1_r2_sl * d_val))
+                                # Stage 1 Ratchet (+1.40D reached -> lock +1.00D)
+                                elif p >= p0 * (1.0 + b1_r1_trig * d_val) and b1_ratchet_stage < 1:
                                     b1_ratchet_stage = 1
-                                    primary_sl = max(primary_sl, p0 * (1.0 + (hedge_ratio * confirm_mult * d_val) + fee_buf) + p0 * d_val)
+                                    primary_sl = max(primary_sl, p0 * (1.0 + b1_r1_sl * d_val))
                                 # Stop Loss hit
                                 elif p <= primary_sl:
                                     exit_px = primary_sl
@@ -671,9 +684,14 @@ class ReplayEngine:
                                     cycle_scenario = "SCENARIO_1_B1_TP"
                                     cycle_done = True
                                     break
-                                elif p <= confirm_px * (1.0 - 0.40 * d_val) and b1_ratchet_stage < 1:
+                                # Stage 2 Ratchet (-2.20D reached -> lock +1.70D)
+                                elif p <= p0 * (1.0 - b1_r2_trig * d_val) and b1_ratchet_stage < 2:
+                                    b1_ratchet_stage = 2
+                                    primary_sl = min(primary_sl, p0 * (1.0 - b1_r2_sl * d_val))
+                                # Stage 1 Ratchet (-1.40D reached -> lock +1.00D)
+                                elif p <= p0 * (1.0 - b1_r1_trig * d_val) and b1_ratchet_stage < 1:
                                     b1_ratchet_stage = 1
-                                    primary_sl = min(primary_sl, p0 * (1.0 - (hedge_ratio * confirm_mult * d_val) - fee_buf) - p0 * d_val)
+                                    primary_sl = min(primary_sl, p0 * (1.0 - b1_r1_sl * d_val))
                                 elif p >= primary_sl:
                                     exit_px = primary_sl
                                     total_fees += (primary_qty * exit_px) * TAKER_FEE_RATE
@@ -698,19 +716,22 @@ class ReplayEngine:
                                     cycle_scenario = "SCENARIO_4_B2_TP"
                                     cycle_done = True
                                     break
-                                # Trail trigger (-0.40D past confirm -> lock +1.0D profit)
-                                elif p <= confirm_px * (1.0 - 0.40 * d_val) and not b2_fast_be_locked:
+                                # Milestone 1: Extends past True Breakeven (cushion 0.10D) -> Lock True BE
+                                elif p <= (true_be_sl - p0 * b2_be_cushion * d_val) and not b2_fast_be_locked:
                                     b2_fast_be_locked = True
-                                    primary_sl = min(primary_sl, true_be_sl - p0 * d_val)
+                                    primary_sl = true_be_sl
+                                # Milestone 2: Ratchet SL to b2_r2_sl (+0.65D Profit Lock)
+                                elif p <= p0 * (1.0 - b2_r2_trig * d_val):
+                                    primary_sl = min(primary_sl, p0 * (1.0 - b2_r2_sl * d_val))
                                 # Stopped out
                                 elif p >= primary_sl:
                                     exit_px = primary_sl
                                     total_fees += (primary_qty * exit_px) * TAKER_FEE_RATE
                                     counter_profit = (blended_b2_entry - exit_px) * primary_qty
                                     if b2_fast_be_locked:
-                                        cycle_scenario = "SCENARIO_4_B2_TP"
-                                    else:
                                         cycle_scenario = "SCENARIO_3_B1_ZERO_LOSS"
+                                    else:
+                                        cycle_scenario = "SCENARIO_5_B2_WHIPSAW"
                                     cycle_done = True
                                     break
 
@@ -722,17 +743,21 @@ class ReplayEngine:
                                     cycle_scenario = "SCENARIO_4_B2_TP"
                                     cycle_done = True
                                     break
-                                elif p >= confirm_px * (1.0 + 0.40 * d_val) and not b2_fast_be_locked:
+                                # Milestone 1: Extends past True Breakeven (cushion 0.10D) -> Lock True BE
+                                elif p >= (true_be_sl + p0 * b2_be_cushion * d_val) and not b2_fast_be_locked:
                                     b2_fast_be_locked = True
-                                    primary_sl = max(primary_sl, true_be_sl + p0 * d_val)
+                                    primary_sl = true_be_sl
+                                # Milestone 2: Ratchet SL to b2_r2_sl (+0.65D Profit Lock)
+                                elif p >= p0 * (1.0 + b2_r2_trig * d_val):
+                                    primary_sl = max(primary_sl, p0 * (1.0 + b2_r2_sl * d_val))
                                 elif p <= primary_sl:
                                     exit_px = primary_sl
                                     total_fees += (primary_qty * exit_px) * TAKER_FEE_RATE
                                     counter_profit = (exit_px - blended_b2_entry) * primary_qty
                                     if b2_fast_be_locked:
-                                        cycle_scenario = "SCENARIO_4_B2_TP"
-                                    else:
                                         cycle_scenario = "SCENARIO_3_B1_ZERO_LOSS"
+                                    else:
+                                        cycle_scenario = "SCENARIO_5_B2_WHIPSAW"
                                     cycle_done = True
                                     break
 

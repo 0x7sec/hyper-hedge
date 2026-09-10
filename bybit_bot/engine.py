@@ -63,6 +63,7 @@ class PairState:
     b2_trailed_to_be: bool = False
     b2_trailed_to_plus_1d: bool = False
     base_be_sl: Decimal = Decimal("0")
+    dynamic_d: Optional[Decimal] = None
 
     def is_active(self) -> bool:
         return self.status == "ACTIVE" and (
@@ -542,7 +543,7 @@ class BybitTradingEngine:
                             f"\n[bold green]>>> [{sym}] SIGNAL CONFIRMED: {direction.upper()} on "
                             f"{closed_candle['datetime'].strftime('%H:%M')} candle! <<<[/bold green]"
                         )
-                        self._enter_pair_trade(pair, direction)
+                        self._enter_pair_trade(pair, direction, candles=candles)
                         active_count += 1
                         report_lines.append(f"  * [bold green]{sym:<8}[/bold green]: TRIGGERED {direction.upper()} ENTRY!")
                         continue
@@ -735,7 +736,7 @@ class BybitTradingEngine:
     # TRADE ENTRY
     # ==========================================================================
 
-    def _enter_pair_trade(self, pair: PairState, direction: str) -> None:
+    def _enter_pair_trade(self, pair: PairState, direction: str, candles: Optional[List[Dict[str, Any]]] = None) -> None:
         """Execute simultaneous Long and Short market orders for this pair."""
         sym = pair.cfg.symbol
         console.print(f"\n[bold yellow]>>> [{sym}] EXECUTING DOUBLE ENTRY (LONG & SHORT HEDGE) <<<[/bold yellow]")
@@ -783,6 +784,27 @@ class BybitTradingEngine:
         pair.b2_trailed_to_be = False
         pair.b2_trailed_to_plus_1d = False
         pair.base_be_sl = Decimal("0")
+
+        # Compute Dynamic ATR D if enabled
+        pair.dynamic_d = pair.cfg.d_ratio
+        if pair.cfg.use_dynamic_atr and pair.entry_price > Decimal("0"):
+            if not candles or len(candles) < 15:
+                try:
+                    candles = self.service.get_recent_candles(symbol=sym, interval=pair.cfg.candle_interval, limit=30)
+                    if len(candles) >= 15:
+                        compute_indicators(candles, fast_periods=[pair.cfg.ema_fast, pair.cfg.ema_slow], adx_period=pair.cfg.adx_period)
+                except Exception as e:
+                    logger.debug(f"[{sym}] Could not fetch candles for dynamic ATR: {e}")
+            if candles and len(candles) >= 3:
+                closed_candle = candles[-2]
+                atr_v = closed_candle.get("atr")
+                if atr_v is not None and Decimal(str(atr_v)) > Decimal("0"):
+                    pair.dynamic_d = max(Decimal("0.003"), (pair.cfg.atr_mult * Decimal(str(atr_v))) / pair.entry_price)
+                    console.print(
+                        f"\n[bold cyan]>>> [{sym}] DYNAMIC ATR ARMED: D = {pair.dynamic_d * Decimal('100'):.3f}% "
+                        f"(ATR: {atr_v:.2f}, Mult: {pair.cfg.atr_mult}) <<<[/bold cyan]"
+                    )
+
         pair.cycle_count += 1
         pair.status_msg = f"ACTIVE ({pair.phase} #{pair.cycle_count})"
 
@@ -830,7 +852,7 @@ class BybitTradingEngine:
     def _process_path_b_tick(self, pair: PairState, price: Decimal) -> None:
         """Execute Path B Asymmetric Trap Hunter & Zero-Loss Pullback state machine."""
         sym = pair.cfg.symbol
-        d_val = pair.cfg.d_ratio
+        d_val = pair.dynamic_d if (pair.dynamic_d and pair.dynamic_d > Decimal("0")) else pair.cfg.d_ratio
         entry_px = pair.entry_price
         base_qty = pair.cfg.size
         c_qty = pair.cfg.effective_counter_size
@@ -881,6 +903,7 @@ class BybitTradingEngine:
                 elif price <= entry_px * (Decimal("1") - pair.cfg.confirm_mult * d_val):
                     pair.phase = "RUNNER_B2"
                     confirm_px = price
+                    exhaustion_level = entry_px * (Decimal("1") - pair.cfg.exhaustion_mult * d_val)
                     tp_level = entry_px * (Decimal("1") - pair.cfg.b2_tp_mult * d_val)
 
                     # 1. Collapse Trapped 100% Primary Long Leg
@@ -890,16 +913,16 @@ class BybitTradingEngine:
                         pair.long_leg.exit_price = confirm_px
                         self._csv_event(pair, pair.long_leg, "B2_COLLAPSE_PRIMARY", confirm_px)
 
-                    # EXHAUSTION GUARD: If price already plunged to or below the B2 TP target in a flash event,
-                    # do NOT size-flip by selling the bottom wick! Harvest profit on existing 30% short and end cycle.
-                    if price <= tp_level:
+                    # EXHAUSTION GUARD: If price already plunged past exhaustion_level or TP target,
+                    # do NOT size-flip by selling into an overshot wick! Harvest profit on existing 30% short and end cycle.
+                    if price <= exhaustion_level or price <= tp_level:
                         if pair.short_leg and pair.short_leg.status == "ACTIVE":
                             self.service.close_position(2, pair.short_leg.size, symbol=sym)
                             pair.short_leg.status = "CLOSED_TP"
                             pair.short_leg.exit_price = price
                             self._csv_event(pair, pair.short_leg, "TP_HIT_EXHAUSTION", price)
                         console.print(
-                            f"\n[bold green]>>> [{sym}] FLASH DUMP DETECTED @ {price:.2f} (<= B2 TP {tp_level:.2f})! "
+                            f"\n[bold green]>>> [{sym}] FLASH DUMP DETECTED @ {price:.2f} (<= Exhaustion {exhaustion_level:.2f})! "
                             f"Harvested 30% Short profit without size-flipping into bottom wick. <<<[/bold green]"
                         )
                         self._close_pair_cycle(pair)
@@ -924,7 +947,7 @@ class BybitTradingEngine:
                     blend_px = pair.short_leg.entry_price if pair.short_leg else confirm_px
                     total_drain = abs(trapped_loss) + trapped_fees + upsize_fees + (base_qty * blend_px * fee_rate * Decimal("2"))
                     true_be = blend_px - (total_drain / base_qty)
-                    curr_sl = entry_px  # Initial SL placed at initial entry P0
+                    curr_sl = entry_px  # Initial SL placed at initial entry P0 (valid above/below market price on exchange)
 
                     if pair.short_leg and pair.short_leg.status == "ACTIVE":
                         pair.short_leg.trailing_sl = curr_sl
@@ -983,6 +1006,7 @@ class BybitTradingEngine:
                 elif price >= entry_px * (Decimal("1") + pair.cfg.confirm_mult * d_val):
                     pair.phase = "RUNNER_B2"
                     confirm_px = price
+                    exhaustion_level = entry_px * (Decimal("1") + pair.cfg.exhaustion_mult * d_val)
                     tp_level = entry_px * (Decimal("1") + pair.cfg.b2_tp_mult * d_val)
 
                     # 1. Collapse Trapped 100% Primary Short Leg
@@ -992,16 +1016,16 @@ class BybitTradingEngine:
                         pair.short_leg.exit_price = confirm_px
                         self._csv_event(pair, pair.short_leg, "B2_COLLAPSE_PRIMARY", confirm_px)
 
-                    # EXHAUSTION GUARD: If price already pumped to or above the B2 TP target in a flash event,
+                    # EXHAUSTION GUARD: If price already pumped past exhaustion_level or TP target,
                     # do NOT size-flip by buying the top wick! Harvest profit on existing 30% long and end cycle.
-                    if price >= tp_level:
+                    if price >= exhaustion_level or price >= tp_level:
                         if pair.long_leg and pair.long_leg.status == "ACTIVE":
                             self.service.close_position(1, pair.long_leg.size, symbol=sym)
                             pair.long_leg.status = "CLOSED_TP"
                             pair.long_leg.exit_price = price
                             self._csv_event(pair, pair.long_leg, "TP_HIT_EXHAUSTION", price)
                         console.print(
-                            f"\n[bold green]>>> [{sym}] FLASH PUMP DETECTED @ {price:.2f} (>= B2 TP {tp_level:.2f})! "
+                            f"\n[bold green]>>> [{sym}] FLASH PUMP DETECTED @ {price:.2f} (>= Exhaustion {exhaustion_level:.2f})! "
                             f"Harvested 30% Long profit without size-flipping into top wick. <<<[/bold green]"
                         )
                         self._close_pair_cycle(pair)
@@ -1026,7 +1050,7 @@ class BybitTradingEngine:
                     blend_px = pair.long_leg.entry_price if pair.long_leg else confirm_px
                     total_drain = abs(trapped_loss) + trapped_fees + upsize_fees + (base_qty * blend_px * fee_rate * Decimal("2"))
                     true_be = blend_px + (total_drain / base_qty)
-                    curr_sl = entry_px  # Initial SL placed at initial entry P0
+                    curr_sl = entry_px  # Initial SL placed at initial entry P0 (valid above/below market price on exchange)
 
                     if pair.long_leg and pair.long_leg.status == "ACTIVE":
                         pair.long_leg.trailing_sl = curr_sl

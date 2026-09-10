@@ -102,12 +102,39 @@ def calculate_adx(candles: List[Dict[str, Any]], period: int = 14) -> List[Optio
     return adx_vals
 
 
+def calculate_atr(candles: List[Dict[str, Any]], period: int = 14) -> List[Optional[Decimal]]:
+    """Wilder's 14-period Average True Range."""
+    n = len(candles)
+    if n < period + 1:
+        return [None] * n
+
+    tr_list: List[Decimal] = [Decimal("0")] * n
+    for i in range(1, n):
+        h = Decimal(str(candles[i]["high"]))
+        l = Decimal(str(candles[i]["low"]))
+        prev_c = Decimal(str(candles[i - 1]["close"]))
+        tr = max(h - l, abs(h - prev_c), abs(l - prev_c))
+        tr_list[i] = tr
+
+    atr_vals: List[Optional[Decimal]] = [None] * n
+    p_dec = Decimal(str(period))
+    current_atr = sum(tr_list[1:period + 1]) / p_dec
+    atr_vals[period] = current_atr
+
+    for i in range(period + 1, n):
+        current_atr = (current_atr * (p_dec - Decimal("1")) + tr_list[i]) / p_dec
+        atr_vals[i] = current_atr
+
+    return atr_vals
+
+
 def compute_indicators(
     candles: List[Dict[str, Any]],
     fast_periods: List[int] = None,
     adx_period: int = 14,
+    atr_period: int = 14,
 ) -> None:
-    """Precompute EMAs and ADX and attach them to each candle dictionary."""
+    """Precompute EMAs, ADX, and ATR and attach them to each candle dictionary."""
     if fast_periods is None:
         fast_periods = [9, 20, 50, 100, 200]
 
@@ -120,6 +147,10 @@ def compute_indicators(
     adx_vals = calculate_adx(candles, period=adx_period)
     for idx, c in enumerate(candles):
         c["adx"] = adx_vals[idx]
+
+    atr_vals = calculate_atr(candles, period=atr_period)
+    for idx, c in enumerate(candles):
+        c["atr"] = atr_vals[idx]
 
 
 def fetch_historical_candles(symbol: str, interval: str, target_candles: int = 5000) -> List[Dict[str, Any]]:

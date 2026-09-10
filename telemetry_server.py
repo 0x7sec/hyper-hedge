@@ -20,7 +20,13 @@ from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from http.cookies import SimpleCookie
 import time
 import urllib.request
+import struct
+import base64
+import select
+import logging
 from decimal import Decimal
+
+logger = logging.getLogger("telemetry")
 
 # Import compute_indicators from backtest
 try:
@@ -509,7 +515,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
 
         # Check authentication for protected routes
         if not self._is_authenticated():
-            if parsed.path.startswith("/api/"):
+            if parsed.path.startswith("/api/") or parsed.path == "/ws":
                 self._send_json({"error": "Unauthorized", "message": "Valid password required via ?password=... or Bearer header."}, 401)
             else:
                 self._redirect("/login")
@@ -518,6 +524,10 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         # Routes
         if parsed.path in ["/", "/dashboard"]:
             self._send_html(self._render_dashboard(), cookie=set_cookie)
+        elif parsed.path == "/ws":
+            self._handle_ws()
+        elif parsed.path == "/api/live-status":
+            self._send_json(self._get_live_telemetry_payload())
         elif parsed.path == "/api/status":
             self._handle_api_status()
         elif parsed.path == "/api/ai-summary":
@@ -739,130 +749,93 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         tickers = fetch_24h_tickers()
         self._send_json({"tickers": tickers})
 
-    # ==========================================================================
-    # HTML UI RENDERING
-    # ==========================================================================
+    def _build_ws_frame(self, payload_bytes: bytes) -> bytes:
+        """Construct an unmasked RFC 6455 WebSocket text frame (server -> client)."""
+        length = len(payload_bytes)
+        if length < 126:
+            header = struct.pack("!BB", 0x81, length)
+        elif length <= 0xFFFF:
+            header = struct.pack("!BBH", 0x81, 126, length)
+        else:
+            header = struct.pack("!BBQ", 0x81, 127, length)
+        return header + payload_bytes
 
-    def _render_login(self, error: str = "") -> str:
-        err_html = f'<div class="error-msg">{error}</div>' if error else ""
-        return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Bybit Bot Telemetry - Authenticate</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <style>
-    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-    body {{
-      font-family: 'Inter', sans-serif;
-      background: #090d16;
-      color: #e2e8f0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      padding: 16px;
-    }}
-    .card {{
-      background: #131b2e;
-      border: 1px solid #1e293b;
-      border-radius: 16px;
-      padding: 36px 32px;
-      width: 100%;
-      max-width: 420px;
-      box-shadow: 0 20px 40px rgba(0,0,0,0.6);
-      text-align: center;
-    }}
-    .logo {{
-      font-size: 28px;
-      font-weight: 700;
-      letter-spacing: -0.5px;
-      color: #38bdf8;
-      margin-bottom: 8px;
-    }}
-    .subtitle {{
-      color: #94a3b8;
-      font-size: 14px;
-      margin-bottom: 28px;
-    }}
-    .form-group {{
-      margin-bottom: 20px;
-      text-align: left;
-    }}
-    label {{
-      display: block;
-      font-size: 13px;
-      font-weight: 500;
-      color: #cbd5e1;
-      margin-bottom: 8px;
-    }}
-    input[type="password"] {{
-      width: 100%;
-      padding: 12px 16px;
-      background: #090d16;
-      border: 1px solid #334155;
-      border-radius: 8px;
-      color: #fff;
-      font-size: 15px;
-      outline: none;
-      transition: border-color 0.2s;
-    }}
-    input[type="password"]:focus {{
-      border-color: #38bdf8;
-    }}
-    button {{
-      width: 100%;
-      padding: 13px;
-      background: #0284c7;
-      color: #fff;
-      border: none;
-      border-radius: 8px;
-      font-size: 15px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: background 0.2s;
-    }}
-    button:hover {{
-      background: #0369a1;
-    }}
-    .error-msg {{
-      background: rgba(239, 68, 68, 0.15);
-      border: 1px solid #ef4444;
-      color: #fca5a5;
-      padding: 10px;
-      border-radius: 6px;
-      font-size: 13px;
-      margin-bottom: 20px;
-    }}
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div class="logo">⚡ Bybit Hedge Bot</div>
-    <div class="subtitle">Enter telemetry password to access live metrics & logs</div>
-    {err_html}
-    <form method="POST" action="/login">
-      <div class="form-group">
-        <label for="password">Password / Access Token</label>
-        <input type="password" id="password" name="password" required autofocus placeholder="••••••••••••••••">
-      </div>
-      <button type="submit">Unlock Dashboard</button>
-    </form>
-  </div>
-</body>
-</html>"""
+    def _handle_ws(self):
+        """Handle RFC 6455 WebSocket upgrade and stream live telemetry updates every 2s."""
+        key = self.headers.get("Sec-WebSocket-Key", "")
+        if not key:
+            self.send_error(400, "Bad Request: Missing Sec-WebSocket-Key")
+            return
 
-    def _render_dashboard(self) -> str:
+        guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+        accept_token = base64.b64encode(hashlib.sha1((key + guid).encode("utf-8")).digest()).decode("utf-8")
+
+        handshake = (
+            "HTTP/1.1 101 Switching Protocols\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Accept: {accept_token}\r\n"
+            "\r\n"
+        )
+        try:
+            self.connection.sendall(handshake.encode("utf-8"))
+        except Exception:
+            return
+
+        sock = self.connection
+        sock.setblocking(True)
+        sock.settimeout(2.0)
+
+        try:
+            while True:
+                payload = self._get_live_telemetry_payload()
+                data_bytes = json.dumps(payload).encode("utf-8")
+                frame = self._build_ws_frame(data_bytes)
+                sock.sendall(frame)
+
+                start_wait = time.time()
+                while time.time() - start_wait < 2.0:
+                    r, _, _ = select.select([sock], [], [], 0.4)
+                    if r:
+                        try:
+                            raw = sock.recv(4096)
+                            if not raw:
+                                return
+                            opcode = raw[0] & 0x0F
+                            if opcode == 0x8:  # Close frame
+                                sock.sendall(bytes([0x88, 0x00]))
+                                return
+                            elif opcode == 0x9:  # Ping frame
+                                sock.sendall(bytes([0x8A, 0x00]))
+                        except (BlockingIOError, InterruptedError):
+                            continue
+                        except Exception:
+                            return
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        except Exception as e:
+            logger.debug(f"WS session ended: {e}")
+
+    def _get_live_telemetry_payload(self) -> dict:
+        """Collect all live telemetry and render dynamic HTML snippets for real-time DOM injection."""
         state = read_bot_state()
         svc = get_service_status()
         acc = fetch_bybit_account_and_trades()
-        trades = read_trade_history(limit=25)
+        trades = read_trade_history(limit=50)
         logs = get_systemd_logs(lines=80)
+        tickers_24h = fetch_24h_tickers()
 
         is_active = svc.get("active", True)
         status_color = "#10b981" if is_active else "#ef4444"
         status_text = "ACTIVE" if is_active else "STOPPED"
+
+        brand_status_html = f"""
+        <div class="brand-title-wrap">
+          <div class="pulse-dot" style="background:{status_color}; box-shadow:0 0 10px {status_color};"></div>
+          <h1>Bybit <span class="hide-mobile">Multi-Pair </span>Hedge Bot</h1>
+        </div>
+        <span class="status-pill" style="border-color:{status_color}; color:{status_color}">{status_text}</span>
+        """
 
         uptime_sec = state.get("uptime_seconds", 0)
         uptime_str = f"{uptime_sec // 3600}h {(uptime_sec % 3600) // 60}m {uptime_sec % 60}s" if uptime_sec else "Running"
@@ -880,8 +853,35 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         opnl_color = "#10b981" if open_pnl >= 0 else "#ef4444"
         tpnl_color = "#10b981" if total_pnl >= 0 else "#ef4444"
 
+        stats_grid_html = f"""
+        <div class="card">
+          <div class="stat-title">Total Account Balance</div>
+          <div class="stat-val" style="color:#38bdf8;">${equity:,.2f}</div>
+          <div class="stat-sub">Available: ${avail_bal:,.2f} USDT</div>
+        </div>
+        <div class="card">
+          <div class="stat-title">Realized Net Profit</div>
+          <div class="stat-val" style="color:{rpnl_color}">${realized_pnl:+.2f}</div>
+          <div class="stat-sub">Across {trades_count} closed Bybit trades</div>
+        </div>
+        <div class="card">
+          <div class="stat-title">Open Unrealized PnL</div>
+          <div class="stat-val" style="color:{opnl_color}">${open_pnl:+.2f}</div>
+          <div class="stat-sub">Active market floating</div>
+        </div>
+        <div class="card">
+          <div class="stat-title">Total Performance Impact</div>
+          <div class="stat-val" style="color:{tpnl_color}">${total_pnl:+.2f}</div>
+          <div class="stat-sub">Realized + Floating</div>
+        </div>
+        <div class="card">
+          <div class="stat-title">System Uptime</div>
+          <div class="stat-val" style="font-size: 18px; margin-top:4px;">{uptime_str}</div>
+          <div class="stat-sub">Scans: {state.get('scan_count', 0)} | Leverage: {state.get('leverage', 4)}x</div>
+        </div>
+        """
+
         # Markets rows & Active Positions
-        tickers_24h = fetch_24h_tickers()
         market_cards = []
         active_positions_rows = []
         pairs = state.get("pairs", {})
@@ -948,8 +948,6 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                   </div>
                 </div>"""
 
-                # Add to active positions table
-                px_val_str = f"${px:,.2f}" if px is not None else "---"
                 l_notional_str = f"(${l_size * px:,.1f})" if (px and l_size) else ""
                 table_sl = f'<span class="target-tag sl">🛡️ ${l_sl:,.2f}</span><div style="font-size:10px; color:#ef4444; margin-top:2px;">Buffer: ${abs(l_sl_buf):,.2f} ({abs(l_sl_buf_pct):.2f}%)</div>' if (l_sl > 0 and px) else (f'<span class="target-tag sl">🛡️ ${l_sl:,.2f}</span>' if l_sl > 0 else '---')
                 table_tp = f'<span class="target-tag tp">🎯 ${l_tp:,.2f}</span><div style="font-size:10px; color:#10b981; margin-top:2px;">Target: ${abs(l_tp_buf):,.2f} ({abs(l_tp_buf_pct):.2f}%)</div>' if (l_tp > 0 and px) else (f'<span class="target-tag tp">🎯 ${l_tp:,.2f}</span>' if l_tp > 0 else '---')
@@ -1107,7 +1105,6 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             cum_col = "#10b981" if cum_val >= 0 else "#ef4444"
             leg_badge = "long" if "LONG" in leg_val or "BUY" in leg_val else ("short" if "SHORT" in leg_val or "SELL" in leg_val else "event")
 
-            # Style event badge
             evt_class = "event"
             if "TP" in evt_val:
                 evt_class = "tp"
@@ -1137,7 +1134,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
               <td style="color:{cum_col}; font-weight:600; font-family:'JetBrains Mono';">${cum_val:+.2f}</td>
             </tr>""")
 
-        # Tab 2: Exchange trades from Bybit API
+        # Tab 2: Exchange trades from Bybit API (WITHOUT TAKER FEE - fee is always 0)
         exchange_trade_rows = []
         for t in recent_exchange_trades:
             pnl_val = float(t.get("closed_pnl", 0) or 0)
@@ -1152,8 +1149,6 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                 except Exception:
                     ts_display = ""
 
-            fee_val = float(t.get("exec_fee", 0) or 0)
-
             exchange_trade_rows.append(f"""<tr>
               <td>{ts_display}</td>
               <td><b>{t.get('symbol','')}</b></td>
@@ -1162,12 +1157,11 @@ class TelemetryHandler(BaseHTTPRequestHandler):
               <td style="font-family:'JetBrains Mono';">{t.get('qty','')}</td>
               <td style="font-family:'JetBrains Mono';">${t.get('entry_price', 0):,.2f}</td>
               <td style="font-family:'JetBrains Mono';">${t.get('exit_price', 0):,.2f}</td>
-              <td style="font-family:'JetBrains Mono'; color:#f87171;">-${abs(fee_val):.4f}</td>
               <td style="color:{col}; font-weight:700; font-family:'JetBrains Mono';">${pnl_val:+.2f}</td>
             </tr>""")
 
         csv_trades_html = "\n".join(trade_rows) if trade_rows else '<tr><td colspan="11" style="text-align:center; padding:24px; color:#64748b;">No internal bot events recorded in bybit_trades.csv yet for the current session.<br><small style="color:#475569;">Switch to the <b>Bybit Exchange Closed P&amp;L</b> tab to see official Bybit closed position executions.</small></td></tr>'
-        exchange_trades_html = "\n".join(exchange_trade_rows) if exchange_trade_rows else '<tr><td colspan="9" style="text-align:center; padding:24px; color:#64748b;">No closed position fills retrieved from Bybit UTA API yet.</td></tr>'
+        exchange_trades_html = "\n".join(exchange_trade_rows) if exchange_trade_rows else '<tr><td colspan="8" style="text-align:center; padding:24px; color:#64748b;">No closed position fills retrieved from Bybit UTA API yet.</td></tr>'
 
         # Symbol breakdown badges
         badges = []
@@ -1175,6 +1169,139 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             b_col = "#10b981" if val >= 0 else "#ef4444"
             badges.append(f'<span><b>{s}:</b> <span style="color:{b_col};">${val:+.2f}</span></span>')
         pnl_by_symbol_badges = " &bull; ".join(badges) if badges else '<span style="color:#64748b;">Awaiting trade events...</span>'
+
+        return {
+            "status_color": status_color,
+            "status_text": status_text,
+            "brand_status_html": brand_status_html,
+            "stats_grid_html": stats_grid_html,
+            "pnl_by_symbol_html": pnl_by_symbol_badges,
+            "markets_html": markets_html,
+            "active_positions_html": active_positions_html,
+            "csv_trades_html": csv_trades_html,
+            "csv_count": len(trade_rows),
+            "exchange_trades_html": exchange_trades_html,
+            "exchange_count": len(recent_exchange_trades),
+            "logs": logs,
+        }
+
+    # ==========================================================================
+    # HTML UI RENDERING
+    # ==========================================================================
+
+    def _render_login(self, error: str = "") -> str:
+        err_html = f'<div class="error-msg">{error}</div>' if error else ""
+        return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bybit Bot Telemetry - Authenticate</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
+      font-family: 'Inter', sans-serif;
+      background: #090d16;
+      color: #e2e8f0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 16px;
+    }}
+    .card {{
+      background: #131b2e;
+      border: 1px solid #1e293b;
+      border-radius: 16px;
+      padding: 36px 32px;
+      width: 100%;
+      max-width: 420px;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.6);
+      text-align: center;
+    }}
+    .logo {{
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      color: #38bdf8;
+      margin-bottom: 8px;
+    }}
+    .subtitle {{
+      color: #94a3b8;
+      font-size: 14px;
+      margin-bottom: 28px;
+    }}
+    .form-group {{
+      margin-bottom: 20px;
+      text-align: left;
+    }}
+    label {{
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: #cbd5e1;
+      margin-bottom: 8px;
+    }}
+    input[type="password"] {{
+      width: 100%;
+      padding: 12px 16px;
+      background: #090d16;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      color: #fff;
+      font-size: 15px;
+      outline: none;
+      transition: border-color 0.2s;
+    }}
+    input[type="password"]:focus {{
+      border-color: #38bdf8;
+    }}
+    button {{
+      width: 100%;
+      padding: 13px;
+      background: #0284c7;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }}
+    button:hover {{
+      background: #0369a1;
+    }}
+    .error-msg {{
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid #ef4444;
+      color: #fca5a5;
+      padding: 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      margin-bottom: 20px;
+    }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">⚡ Bybit Hedge Bot</div>
+    <div class="subtitle">Enter telemetry password to access live metrics & logs</div>
+    {err_html}
+    <form method="POST" action="/login">
+      <div class="form-group">
+        <label for="password">Password / Access Token</label>
+        <input type="password" id="password" name="password" required autofocus placeholder="••••••••••••••••">
+      </div>
+      <button type="submit">Unlock Dashboard</button>
+    </form>
+  </div>
+</body>
+</html>"""
+
+    def _render_dashboard(self) -> str:
+        d = self._get_live_telemetry_payload()
+        status_color = d["status_color"]
 
         return f"""<!DOCTYPE html>
 <html lang="en">
@@ -1623,68 +1750,42 @@ class TelemetryHandler(BaseHTTPRequestHandler):
 <body>
   <div class="container">
     <header>
-      <div class="brand">
-        <div class="brand-title-wrap">
-          <div class="pulse-dot"></div>
-          <h1>Bybit <span class="hide-mobile">Multi-Pair </span>Hedge Bot</h1>
-        </div>
-        <span class="status-pill" style="border-color:{status_color}; color:{status_color}">{status_text}</span>
+      <div class="brand" id="brand-status">
+        {d['brand_status_html']}
       </div>
       <div class="header-actions">
         <a href="/api/ai-summary" class="btn" target="_blank" title="AI Summary Markdown">🤖 AI View</a>
         <a href="/api/status" class="btn" target="_blank" title="JSON Status API">⚡ JSON</a>
-        <button onclick="location.reload()" class="btn btn-primary" title="Refresh Telemetry">🔄 Refresh</button>
+        <button onclick="refreshLiveTelemetry()" class="btn btn-primary" title="Refresh Telemetry">🔄 Refresh</button>
         <a href="/logout" class="btn" title="Logout">🚪 Exit</a>
       </div>
     </header>
 
-    <div class="stats-grid">
-      <div class="card">
-        <div class="stat-title">Total Account Balance</div>
-        <div class="stat-val" style="color:#38bdf8;">${equity:,.2f}</div>
-        <div class="stat-sub">Available: ${avail_bal:,.2f} USDT</div>
-      </div>
-      <div class="card">
-        <div class="stat-title">Realized Net Profit</div>
-        <div class="stat-val" style="color:{rpnl_color}">${realized_pnl:+.2f}</div>
-        <div class="stat-sub">Across {trades_count} closed Bybit trades</div>
-      </div>
-      <div class="card">
-        <div class="stat-title">Open Unrealized PnL</div>
-        <div class="stat-val" style="color:{opnl_color}">${open_pnl:+.2f}</div>
-        <div class="stat-sub">Active market floating</div>
-      </div>
-      <div class="card">
-        <div class="stat-title">Total Performance Impact</div>
-        <div class="stat-val" style="color:{tpnl_color}">${total_pnl:+.2f}</div>
-        <div class="stat-sub">Realized + Floating</div>
-      </div>
-      <div class="card">
-        <div class="stat-title">System Uptime</div>
-        <div class="stat-val" style="font-size: 18px; margin-top:4px;">{uptime_str}</div>
-        <div class="stat-sub">Scans: {state.get('scan_count', 0)} | Leverage: {state.get('leverage', 4)}x</div>
-      </div>
+    <div class="stats-grid" id="stats-grid">
+      {d['stats_grid_html']}
     </div>
 
     <div class="card" style="margin-bottom:24px; padding:12px 18px; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; background:#0b1329;">
       <div style="font-size:12px; font-weight:700; text-transform:uppercase; color:#94a3b8; letter-spacing:0.5px;">Bybit Realized P&L by Symbol:</div>
-      <div style="display:flex; flex-wrap:wrap; gap:14px; font-family:'JetBrains Mono', monospace; font-size:13px;">
-        {pnl_by_symbol_badges}
+      <div id="pnl-by-symbol" style="display:flex; flex-wrap:wrap; gap:14px; font-family:'JetBrains Mono', monospace; font-size:13px;">
+        {d['pnl_by_symbol_html']}
       </div>
     </div>
 
     <div class="section-title">
       <span>Market Watch & Active Hedge Legs</span>
     </div>
-    <div class="markets-grid">
-      {markets_html}
+    <div class="markets-grid" id="markets-grid">
+      {d['markets_html']}
     </div>
 
     <div class="section-title">
       <span>Active Live Positions & Order Protection</span>
       <span style="font-size:12px; color:#64748b;">Live Trailing SL & Apex TP Targets</span>
     </div>
-    {active_positions_html}
+    <div id="active-positions-wrap">
+      {d['active_positions_html']}
+    </div>
 
     <div class="section-title">
       <span>Trade Execution & Audit Ledgers</span>
@@ -1694,14 +1795,14 @@ class TelemetryHandler(BaseHTTPRequestHandler):
     <div class="trade-tabs">
       <button id="trade-tab-csv" class="trade-tab-btn active" onclick="switchTradeTab('csv')">
         📜 Bot State Machine Audit <code>(bybit_trades.csv)</code>
-        <span class="tab-count">{len(trade_rows)}</span>
+        <span id="tab-count-csv" class="tab-count">{d['csv_count']}</span>
       </button>
       <button id="trade-tab-exchange" class="trade-tab-btn" onclick="switchTradeTab('exchange')">
         🏛️ Bybit Exchange Closed P&amp;L Ledger <code>(UTA V5)</code>
-        <span class="tab-count">{len(exchange_trade_rows)}</span>
+        <span id="tab-count-exchange" class="tab-count">{d['exchange_count']}</span>
       </button>
-      <div style="margin-left:auto; display:flex; align-items:center; gap:8px;">
-        <a href="/api/clear-trades?redirect=1" class="btn" style="font-size:11px; padding:4px 10px; border-color:#475569;" onclick="return confirm('Clear local bybit_trades.csv audit ledger? (Does not affect exchange fills)');" title="Clear local CSV history only">🧹 Clear CSV History</a>
+      <div id="clear-csv-wrap" style="margin-left:auto; display:flex; align-items:center; gap:8px;">
+        <a href="/api/clear-trades?redirect=1" class="btn" style="font-size:11px; padding:4px 10px; border-color:#475569;" onclick="clearCsvHistory(event)" title="Clear local CSV history only">🧹 Clear CSV History</a>
       </div>
     </div>
 
@@ -1723,8 +1824,8 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             <th>Cumul PnL</th>
           </tr>
         </thead>
-        <tbody>
-          {csv_trades_html}
+        <tbody id="csv-trades-body">
+          {d['csv_trades_html']}
         </tbody>
       </table>
     </div>
@@ -1741,12 +1842,11 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             <th>Qty</th>
             <th>Avg Entry Price</th>
             <th>Avg Exit Price</th>
-            <th>Taker Fee</th>
             <th>Realized Net PnL</th>
           </tr>
         </thead>
-        <tbody>
-          {exchange_trades_html}
+        <tbody id="exchange-trades-body">
+          {d['exchange_trades_html']}
         </tbody>
       </table>
     </div>
@@ -1755,33 +1855,147 @@ class TelemetryHandler(BaseHTTPRequestHandler):
       <span>Live System Logs & Crash Diagnostics</span>
       <span style="font-size:12px; color:#64748b;">journalctl -u bybit-bot -n 80</span>
     </div>
-    <div class="terminal" id="term">{logs}</div>
+    <div class="terminal" id="term">{d['logs']}</div>
   </div>
 
   <script>
-    // Live 24h % movement updater
-    async function updateTickers() {{
+    // Live Real-Time WebSocket Telemetry (Zero page refresh)
+    let ws = null;
+    let wsPollFallback = null;
+
+    function connectTelemetryWS() {{
+      const protocol = (location.protocol === 'https:') ? 'wss://' : 'ws://';
+      const wsUrl = protocol + location.host + '/ws' + location.search;
+
       try {{
-        const res = await fetch('/api/tickers');
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!data || !data.tickers) return;
-        for (const [sym, pct] of Object.entries(data.tickers)) {{
-          const el = document.getElementById('pct-' + sym);
-          if (el && pct !== null && pct !== undefined) {{
-            el.textContent = (pct >= 0 ? '+' : '') + Number(pct).toFixed(2) + '%';
-            el.className = 'pct-badge ' + (pct >= 0 ? 'up' : 'down');
+        ws = new WebSocket(wsUrl);
+      }} catch (err) {{
+        startPollingFallback();
+        return;
+      }}
+
+      ws.onopen = () => {{
+        console.log('[WS] Connected to live Bybit telemetry stream');
+        if (wsPollFallback) {{
+          clearInterval(wsPollFallback);
+          wsPollFallback = null;
+        }}
+      }};
+
+      ws.onmessage = (event) => {{
+        try {{
+          const d = JSON.parse(event.data);
+          applyLiveUpdate(d);
+        }} catch (e) {{
+          console.error('[WS] Error parsing payload:', e);
+        }}
+      }};
+
+      ws.onerror = () => {{
+        try {{ ws.close(); }} catch(e) {{}}
+      }};
+
+      ws.onclose = () => {{
+        startPollingFallback();
+        setTimeout(connectTelemetryWS, 2500);
+      }};
+    }}
+
+    function startPollingFallback() {{
+      if (wsPollFallback) return;
+      wsPollFallback = setInterval(async () => {{
+        try {{
+          const res = await fetch('/api/live-status' + location.search);
+          if (res.ok) {{
+            const d = await res.json();
+            applyLiveUpdate(d);
           }}
+        }} catch (e) {{}}
+      }}, 3000);
+    }}
+
+    function applyLiveUpdate(d) {{
+      if (!d) return;
+      if (d.brand_status_html) {{
+        const el = document.getElementById('brand-status');
+        if (el) el.innerHTML = d.brand_status_html;
+      }}
+      if (d.stats_grid_html) {{
+        const el = document.getElementById('stats-grid');
+        if (el) el.innerHTML = d.stats_grid_html;
+      }}
+      if (d.pnl_by_symbol_html) {{
+        const el = document.getElementById('pnl-by-symbol');
+        if (el) el.innerHTML = d.pnl_by_symbol_html;
+      }}
+      if (d.markets_html) {{
+        const el = document.getElementById('markets-grid');
+        if (el) el.innerHTML = d.markets_html;
+      }}
+      if (d.active_positions_html) {{
+        const el = document.getElementById('active-positions-wrap');
+        if (el) el.innerHTML = d.active_positions_html;
+      }}
+      if (d.csv_trades_html) {{
+        const el = document.getElementById('csv-trades-body');
+        if (el) el.innerHTML = d.csv_trades_html;
+      }}
+      if (d.csv_count !== undefined) {{
+        const el = document.getElementById('tab-count-csv');
+        if (el) el.textContent = d.csv_count;
+      }}
+      if (d.exchange_trades_html) {{
+        const el = document.getElementById('exchange-trades-body');
+        if (el) el.innerHTML = d.exchange_trades_html;
+      }}
+      if (d.exchange_count !== undefined) {{
+        const el = document.getElementById('tab-count-exchange');
+        if (el) el.textContent = d.exchange_count;
+      }}
+      if (d.logs) {{
+        const term = document.getElementById('term');
+        if (term) {{
+          const atBottom = (term.scrollHeight - term.clientHeight) <= (term.scrollTop + 60);
+          term.textContent = d.logs;
+          if (atBottom) term.scrollTop = term.scrollHeight;
+        }}
+      }}
+    }}
+
+    async function refreshLiveTelemetry() {{
+      try {{
+        const res = await fetch('/api/live-status' + location.search);
+        if (res.ok) {{
+          const d = await res.json();
+          applyLiveUpdate(d);
         }}
       }} catch (e) {{}}
     }}
-    setInterval(updateTickers, 10000);
+
+    async function clearCsvHistory(e) {{
+      if (e) e.preventDefault();
+      if (!confirm('Clear local bybit_trades.csv audit ledger? (Does not affect exchange fills)')) return false;
+      try {{
+        const res = await fetch('/api/clear-trades');
+        const data = await res.json();
+        if (data && data.success) {{
+          const b = document.getElementById('csv-trades-body');
+          if (b) b.innerHTML = '<tr><td colspan="11" style="text-align:center; padding:24px; color:#64748b;">No internal bot events recorded in bybit_trades.csv yet for the current session.</td></tr>';
+          const c = document.getElementById('tab-count-csv');
+          if (c) c.textContent = '0';
+        }}
+      }} catch (err) {{
+        location.href = '/api/clear-trades?redirect=1';
+      }}
+      return false;
+    }}
 
     function switchTradeTab(tab) {{
       const csvBtn = document.getElementById('trade-tab-csv');
       const exchBtn = document.getElementById('trade-tab-exchange');
       const csvTable = document.getElementById('trade-table-csv');
       const exchTable = document.getElementById('trade-table-exchange');
+      const clearWrap = document.getElementById('clear-csv-wrap');
       if (!csvBtn || !exchBtn || !csvTable || !exchTable) return;
 
       if (tab === 'exchange') {{
@@ -1789,24 +2003,29 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         exchBtn.classList.add('active');
         csvTable.style.display = 'none';
         exchTable.style.display = 'block';
+        if (clearWrap) clearWrap.style.display = 'none';
       }} else {{
         exchBtn.classList.remove('active');
         csvBtn.classList.add('active');
         exchTable.style.display = 'none';
         csvTable.style.display = 'block';
+        if (clearWrap) clearWrap.style.display = 'flex';
       }}
       localStorage.setItem('active_trade_tab', tab);
     }}
 
     // Auto-restore trade tab preference or auto-switch to exchange if CSV is empty
     const savedTradeTab = localStorage.getItem('active_trade_tab');
-    if (savedTradeTab === 'exchange' || (!{1 if trade_rows else 0} && {1 if exchange_trade_rows else 0})) {{
+    if (savedTradeTab === 'exchange' || (!{1 if d['csv_count'] else 0} && {1 if d['exchange_count'] else 0})) {{
       switchTradeTab('exchange');
+    }} else {{
+      switchTradeTab('csv');
     }}
 
-    // Auto-refresh full page every 30 seconds
-    setTimeout(() => {{ location.reload(); }}, 30000);
-    // Scroll terminal to bottom
+    // Connect WebSocket
+    connectTelemetryWS();
+
+    // Initial scroll terminal to bottom
     const term = document.getElementById('term');
     if (term) term.scrollTop = term.scrollHeight;
   </script>

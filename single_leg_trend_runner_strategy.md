@@ -249,7 +249,51 @@ A critical requirement in multi-pair algorithmic trading is joint market risk ma
 
 ---
 
-## 9. Champion Configuration Profiles for All 8 Assets
+## 9. Dynamic Trailing Stops & Escalation Trajectory
+
+Below is the step-by-step price trajectory showing how an active Long trade progresses from entry through True Breakeven and profit ratchets to Apex TP:
+
+```text
+Price
+^
+|                                            [APEX TP: +2.50D to +3.50D] (Full Win)
+|                                                      *
+|                                                     / \
+|                                [STAGE 2 RATCHET]  *   \
+|                                  (Locks +1.00D SL) /     \
+|                                        *---------*       \
+|                      [STAGE 1 RATCHET]  /
+|                        (Locks +0.60D SL) /
+|                              *---------*
+|            [BREAKEVEN ARM]   /
+|            (Locks True BE SL) /
+|                  *----------*   <-- (Zero-Loss Line: $0 Risk on Pullback)
+|                 /
+|   ENTRY        /
++-----+---*-----+----------------------------------------------------------> Time
+|    P0
+|
+|
+|          * (Initial SL: -1.00D to -1.50D) [Only hit in immediate adverse chop]
+v
+```
+
+### Granular Execution Trajectory Phases:
+1. **Phase 1: Incubation ($P_0$ Entry)**:
+   - Initial protective stop placed at exchange: $P_{\text{SL}} = P_0 - b2\_\text{confirm} \cdot D$. Loss capped strictly at $-1.0D$ to $-1.5D$ (average $-\$13.10$ including VIP0 fees).
+2. **Phase 2: True Breakeven Arm ($+0.35D$ to $+0.50D$)**:
+   - Initial stop cancelled. SL raised to $P_{\text{BE}} = P_0 \cdot (1 + 2\times\text{fee} + 0.05\%)$.
+   - Guarantees $100\%$ capital preservation on any subsequent pullback ($0 risk).
+3. **Phase 3: Stage 1 Profit Ratchet ($+0.80D$ to $+1.00D$)**:
+   - When market expands past Stage 1 trigger, SL ratchets up to lock in $+0.40D$ to $+0.60D$ net profit.
+4. **Phase 4: Stage 2 Profit Ratchet ($+1.50D$ to $+1.60D$)**:
+   - When trend reaches Stage 2 expansion, SL ratchets up to lock in $+0.90D$ to $+1.10D$ net profit.
+5. **Phase 5: Apex Take Profit ($+2.50D$ to $+3.50D$)**:
+   - Limit exit closes $100\%$ runner at maximum expansion target for full win.
+
+---
+
+## 10. Champion Configuration Profiles for All 8 Assets
 
 Each asset profile in `bybit_bot/config.py` is calibrated for its natural hourly volatility and average true range:
 
@@ -364,21 +408,21 @@ CHAMPION_PROFILES = {
 
 ---
 
-## 10. Deployment Command Reference
+## 11. Deployment Command Reference
 
-To start the bot in production on Debian 13 VPS with all 8 champion pairs and max 3 concurrent positions:
+To start the bot in production on Debian 13 VPS with all 8 champion pairs and max 4 concurrent positions:
 
 ```bash
-# Start daemon with 8-asset universe and max 3 concurrency
+# Start daemon with 8-asset universe and max 4 concurrency
 python run_bybit_bot.py \
   --symbols AVAXUSDT,LINKUSDT,HYPEUSDT,XMRUSDT,DOGEUSDT,BTCUSDT,ETHUSDT,SOLUSDT \
-  --max-concurrent-pairs 3 \
+  --max-concurrent-pairs 4 \
   --leverage 4
 
 # Or dry-run simulation mode
 python run_bybit_bot.py \
   --symbols AVAXUSDT,LINKUSDT,HYPEUSDT,XMRUSDT,DOGEUSDT,BTCUSDT,ETHUSDT,SOLUSDT \
-  --max-concurrent-pairs 3 \
+  --max-concurrent-pairs 4 \
   --leverage 4 \
   --dry-run
 ```

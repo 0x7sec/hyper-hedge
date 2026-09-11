@@ -714,9 +714,18 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         if equity:
             md.append(f"- **Account Equity**: `${equity:,.2f} USDT` | **Available Margin**: `${avail:,.2f} USDT`")
         md.append(f"- **Realized PnL**: `${total_pnl:+.2f} USDT` across `{trades_cnt}` closed Bybit trades | **Open PnL**: `${open_pnl:+.2f}`")
-        if sym_pnl:
-            sym_str = " | ".join([f"{k}: `${v:+.2f}`" for k, v in sym_pnl.items()])
-            md.append(f"- **Realized PnL by Symbol**: {sym_str}")
+        target_universe = ["AVAXUSDT", "LINKUSDT", "HYPEUSDT", "DOGEUSDT", "XMRUSDT", "BTCUSDT", "ETHUSDT", "SOLUSDT"]
+        display_syms = list(target_universe)
+        for s in sym_pnl.keys():
+            if s not in display_syms:
+                display_syms.append(s)
+        
+        sym_parts = []
+        for k in display_syms:
+            val = sym_pnl.get(k, 0.0)
+            tag = " (Legacy)" if k not in target_universe else ""
+            sym_parts.append(f"{k}{tag}: `${val:+.2f}`")
+        md.append(f"- **Realized PnL by Symbol**: {' | '.join(sym_parts)}")
         md.append("")
 
         md.append("## Active Single-Leg Positions & Scanner State")
@@ -1247,14 +1256,47 @@ class TelemetryHandler(BaseHTTPRequestHandler):
               <td style="color:#64748b; font-size:11px; white-space:nowrap;">{ts_display}</td>
             </tr>""")
 
-        # PnL by symbol badges
-        pnl_by_sym_html = ""
-        if sym_pnl:
-            for s_sym, s_val in sym_pnl.items():
-                s_col = "#10b981" if s_val >= 0 else "#ef4444"
-                pnl_by_sym_html += f'<div style="display:flex; align-items:center; gap:6px;">{get_coin_icon(s_sym, size=16)}<span>{s_sym}:</span><b style="color:{s_col};">${s_val:+.2f}</b></div>'
-        else:
-            pnl_by_sym_html = '<span style="color:#64748b;">No closed trade fills yet</span>'
+        # PnL by symbol badges across all target universe assets + legacy
+        target_universe = ["AVAXUSDT", "LINKUSDT", "HYPEUSDT", "DOGEUSDT", "XMRUSDT", "BTCUSDT", "ETHUSDT", "SOLUSDT"]
+        active_pairs_list = list(pairs.keys()) if pairs else target_universe
+        
+        display_symbols = list(active_pairs_list)
+        for s in target_universe:
+            if s not in display_symbols:
+                display_symbols.append(s)
+        for s in sym_pnl.keys():
+            if s not in display_symbols:
+                display_symbols.append(s)
+
+        pnl_badges = []
+        for s_sym in display_symbols:
+            if s_sym in sym_pnl:
+                s_val = float(sym_pnl[s_sym])
+                if s_val > 0:
+                    s_col = "#10b981"
+                    val_str = f"+${s_val:,.2f}"
+                elif s_val < 0:
+                    s_col = "#ef4444"
+                    val_str = f"-${abs(s_val):,.2f}"
+                else:
+                    s_col = "#94a3b8"
+                    val_str = "$0.00"
+            else:
+                s_col = "#64748b"
+                val_str = "$0.00"
+
+            legacy_tag = ' <span style="font-size:9px; color:#64748b; font-weight:400;">(Legacy)</span>' if s_sym not in target_universe else ''
+            badge_border = "#1e293b" if s_sym in target_universe else "#151e2e"
+            badge_bg = "#070d19"
+
+            pnl_badges.append(
+                f'<div style="display:flex; align-items:center; gap:6px; background:{badge_bg}; padding:3px 8px; border-radius:4px; border:1px solid {badge_border};">'
+                f'{get_coin_icon(s_sym, size=15)}'
+                f'<span style="font-weight:500; font-size:11px;">{s_sym}{legacy_tag}:</span>'
+                f'<b style="color:{s_col}; font-family:\'JetBrains Mono\', monospace; font-size:11px;">{val_str}</b>'
+                f'</div>'
+            )
+        pnl_by_sym_html = "".join(pnl_badges) if pnl_badges else '<span style="color:#64748b;">No closed trade fills yet</span>'
 
         return {
             "status_color": status_color,

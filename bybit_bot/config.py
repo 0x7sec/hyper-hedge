@@ -8,116 +8,275 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-# -- Champion defaults per market (Path B Asymmetric Trap Hunter) -------------
+# -- Champion defaults per market (Option A: Pure Single-Leg Trend Runner) ---
 DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
     "BTCUSDT": {
         "candle_interval": "60",
         "ema_fast": 9,
         "ema_slow": 21,
-        "adx_min": Decimal("15"),
+        "macro_ema_period": 200,
+        "use_macro_trend_filter": True,
+        "adx_min": Decimal("20"),
         "adx_period": 14,
-        "d_pct": Decimal("0.70"),
+        "adx_rising_required": True,
+        "d_pct": Decimal("0.80"),
         "use_dynamic_atr": True,
         "atr_mult": Decimal("0.85"),
         "exhaustion_mult": Decimal("1.50"),
-        "confirm_mult": Decimal("0.80"),  # Confirm direction at 0.80D (reduces debt, widens runner)
-        "sl_pct": Decimal("0.34"),        # Base Zero-Loss SL = +0.48D
-        "tp_pct": Decimal("1.40"),        # Branch 1 Take-Profit = +2.0D (0.70 * 2.0)
-        "b1_tp_mult": Decimal("2.00"),    # 2.0D Take-Profit on Branch 1
-        "b1_r1_trig": Decimal("1.40"),    # Stage 1 Ratchet trigger (+1.40D)
-        "b1_r1_sl": Decimal("1.00"),      # Stage 1 SL raised to (+1.00D)
-        "b1_r2_trig": Decimal("2.20"),    # Stage 2 Ratchet trigger (+2.20D)
-        "b1_r2_sl": Decimal("1.70"),      # Stage 2 SL raised to (+1.70D)
-        "b2_tp_mult": Decimal("2.00"),    # 2.0D Take-Profit on Branch 2 for BTC
-        "b2_be_cushion": Decimal("0.10"), # Fast True BE Lock triggered at True BE + 0.10D
-        "b2_r2_trig": Decimal("2.50"),    # Milestone 2 profit ratchet on B2 (2.50D)
-        "b2_r2_sl": Decimal("2.10"),      # Milestone 2 SL raised to 2.10D (locks +0.65D net)
+        "confirm_mult": Decimal("0.35"),
+        "b1_confirm": Decimal("0.35"),    # Move to BE at +0.35D
+        "b2_confirm": Decimal("1.20"),    # Initial SL barrier at -1.20D
+        "b2_upsize": False,               # Pure Single-Leg (No upsize)
+        "sl_pct": Decimal("0.34"),
+        "tp_pct": Decimal("2.80"),
+        "b1_tp_mult": Decimal("3.50"),    # Apex TP at +3.50D
+        "b1_r1_trig": Decimal("1.00"),    # Stage 1 Ratchet trigger (+1.00D)
+        "b1_r1_sl": Decimal("0.60"),      # Stage 1 SL raised to (+0.60D)
+        "b1_r2_trig": Decimal("1.30"),    # Stage 2 Ratchet trigger (+1.30D)
+        "b1_r2_sl": Decimal("0.90"),      # Stage 2 SL raised to (+0.90D)
+        "b2_tp_mult": Decimal("2.00"),
+        "b2_be_cushion": Decimal("0.10"),
+        "b2_r2_trig": Decimal("2.50"),
+        "b2_r2_sl": Decimal("2.10"),
         "ratchet_step_pct": Decimal("0.25"),
         "be_lock": True,
         "be_buffer_pct": Decimal("0.34"),
-        "size": Decimal("0.04"),          # ~$2,500 notional per pair on $1,000 capital
+        "size": Decimal("0.01"),          # ~$1,000 notional (for $1,000 capital, 4x leverage, max 3 slots)
         "asymmetric": True,
-        "hedge_ratio": Decimal("0.30"),
+        "hedge_ratio": Decimal("0.0"),    # PURE SINGLE-LEG (NO COUNTER)
         "timeout_bars": 50,
     },
     "ETHUSDT": {
         "candle_interval": "60",
         "ema_fast": 9,
         "ema_slow": 21,
-        "adx_min": Decimal("0"),
+        "macro_ema_period": 200,
+        "use_macro_trend_filter": True,
+        "adx_min": Decimal("20"),
         "adx_period": 14,
+        "adx_rising_required": True,
         "d_pct": Decimal("0.80"),
         "use_dynamic_atr": True,
         "atr_mult": Decimal("0.85"),
         "exhaustion_mult": Decimal("1.50"),
-        "confirm_mult": Decimal("0.80"),  # Confirm direction at 0.80D
-        "sl_pct": Decimal("0.38"),        # Base Zero-Loss SL = +0.48D
-        "tp_pct": Decimal("1.60"),        # Branch 1 Take-Profit = +2.0D (0.80 * 2.0)
-        "b1_tp_mult": Decimal("2.00"),    # 2.0D Take-Profit on Branch 1
-        "b1_r1_trig": Decimal("1.40"),
-        "b1_r1_sl": Decimal("1.00"),
-        "b1_r2_trig": Decimal("2.20"),
-        "b1_r2_sl": Decimal("1.70"),
-        "b2_tp_mult": Decimal("2.00"),    # 2.0D Take-Profit on Branch 2 for ETH
+        "confirm_mult": Decimal("0.40"),
+        "b1_confirm": Decimal("0.40"),    # Move to BE at +0.40D
+        "b2_confirm": Decimal("1.00"),    # Initial SL barrier at -1.00D
+        "b2_upsize": False,
+        "sl_pct": Decimal("0.38"),
+        "tp_pct": Decimal("2.56"),
+        "b1_tp_mult": Decimal("3.20"),    # Apex TP at +3.20D
+        "b1_r1_trig": Decimal("0.80"),    # Stage 1 Ratchet trigger (+0.80D)
+        "b1_r1_sl": Decimal("0.40"),      # Stage 1 SL raised to (+0.40D)
+        "b1_r2_trig": Decimal("1.40"),    # Stage 2 Ratchet trigger (+1.40D)
+        "b1_r2_sl": Decimal("1.00"),      # Stage 2 SL raised to (+1.00D)
+        "b2_tp_mult": Decimal("2.00"),
         "b2_be_cushion": Decimal("0.10"),
         "b2_r2_trig": Decimal("2.50"),
         "b2_r2_sl": Decimal("2.10"),
         "ratchet_step_pct": Decimal("0.25"),
         "be_lock": True,
         "be_buffer_pct": Decimal("0.38"),
-        "size": Decimal("1.0"),           # ~$2,500 notional per pair on $1,000 capital
+        "size": Decimal("0.35"),          # ~$1,000 notional (for $1,000 capital, 4x leverage, max 3 slots)
         "asymmetric": True,
-        "hedge_ratio": Decimal("0.30"),
+        "hedge_ratio": Decimal("0.0"),    # PURE SINGLE-LEG (NO COUNTER)
         "timeout_bars": 50,
     },
     "SOLUSDT": {
         "candle_interval": "60",
         "ema_fast": 9,
         "ema_slow": 21,
-        "adx_min": Decimal("15"),         # ADX>15 filters flat ranges
+        "macro_ema_period": 200,
+        "use_macro_trend_filter": True,
+        "adx_min": Decimal("20"),
         "adx_period": 14,
+        "adx_rising_required": True,
         "d_pct": Decimal("0.80"),
         "use_dynamic_atr": True,
         "atr_mult": Decimal("0.85"),
         "exhaustion_mult": Decimal("1.50"),
-        "confirm_mult": Decimal("0.80"),  # Confirm direction at 0.80D
-        "sl_pct": Decimal("0.38"),        # Base Zero-Loss SL = +0.48D
-        "tp_pct": Decimal("1.60"),        # Branch 1 Take-Profit = +2.0D (0.80 * 2.0)
-        "b1_tp_mult": Decimal("2.00"),    # 2.0D Take-Profit on Branch 1
-        "b1_r1_trig": Decimal("1.40"),
-        "b1_r1_sl": Decimal("1.00"),
-        "b1_r2_trig": Decimal("2.20"),
-        "b1_r2_sl": Decimal("1.70"),
-        "b2_tp_mult": Decimal("2.00"),    # 2.0D Take-Profit on Branch 2 for SOL
+        "confirm_mult": Decimal("0.40"),
+        "b1_confirm": Decimal("0.40"),    # Move to BE at +0.40D
+        "b2_confirm": Decimal("1.00"),    # Initial SL barrier at -1.00D
+        "b2_upsize": False,
+        "sl_pct": Decimal("0.38"),
+        "tp_pct": Decimal("2.56"),
+        "b1_tp_mult": Decimal("3.20"),    # Apex TP at +3.20D
+        "b1_r1_trig": Decimal("1.00"),    # Stage 1 Ratchet trigger (+1.00D)
+        "b1_r1_sl": Decimal("0.60"),      # Stage 1 SL raised to (+0.60D)
+        "b1_r2_trig": Decimal("1.60"),    # Stage 2 Ratchet trigger (+1.60D)
+        "b1_r2_sl": Decimal("1.20"),      # Stage 2 SL raised to (+1.20D)
+        "b2_tp_mult": Decimal("2.00"),
         "b2_be_cushion": Decimal("0.10"),
         "b2_r2_trig": Decimal("2.50"),
         "b2_r2_sl": Decimal("2.10"),
         "ratchet_step_pct": Decimal("0.25"),
         "be_lock": True,
         "be_buffer_pct": Decimal("0.38"),
-        "size": Decimal("15.0"),          # ~$2,500 notional per pair on $1,000 capital
+        "size": Decimal("6.0"),           # ~$1,000 notional (for $1,000 capital, 4x leverage, max 3 slots)
         "asymmetric": True,
-        "hedge_ratio": Decimal("0.30"),
+        "hedge_ratio": Decimal("0.0"),    # PURE SINGLE-LEG (NO COUNTER)
+        "timeout_bars": 50,
+    },
+    "AVAXUSDT": {
+        "candle_interval": "60",
+        "ema_fast": 9,
+        "ema_slow": 21,
+        "macro_ema_period": 200,
+        "use_macro_trend_filter": True,
+        "adx_min": Decimal("20"),
+        "adx_period": 14,
+        "adx_rising_required": True,
+        "d_pct": Decimal("0.80"),
+        "use_dynamic_atr": True,
+        "atr_mult": Decimal("0.85"),
+        "b1_confirm": Decimal("0.35"),
+        "b2_confirm": Decimal("1.20"),
+        "b2_upsize": False,
+        "sl_pct": Decimal("0.38"),
+        "tp_pct": Decimal("2.80"),
+        "b1_tp_mult": Decimal("3.50"),
+        "b1_r1_trig": Decimal("1.00"),
+        "b1_r1_sl": Decimal("0.60"),
+        "b1_r2_trig": Decimal("1.50"),
+        "b1_r2_sl": Decimal("1.10"),
+        "size": Decimal("35.0"),          # ~$1,000 notional
+        "asymmetric": True,
+        "hedge_ratio": Decimal("0.0"),
+        "timeout_bars": 50,
+    },
+    "LINKUSDT": {
+        "candle_interval": "60",
+        "ema_fast": 9,
+        "ema_slow": 21,
+        "macro_ema_period": 200,
+        "use_macro_trend_filter": True,
+        "adx_min": Decimal("20"),
+        "adx_period": 14,
+        "adx_rising_required": True,
+        "d_pct": Decimal("0.80"),
+        "use_dynamic_atr": True,
+        "atr_mult": Decimal("0.85"),
+        "b1_confirm": Decimal("0.35"),
+        "b2_confirm": Decimal("1.50"),
+        "b2_upsize": False,
+        "sl_pct": Decimal("0.38"),
+        "tp_pct": Decimal("2.80"),
+        "b1_tp_mult": Decimal("3.50"),
+        "b1_r1_trig": Decimal("0.80"),
+        "b1_r1_sl": Decimal("0.40"),
+        "b1_r2_trig": Decimal("1.50"),
+        "b1_r2_sl": Decimal("1.10"),
+        "size": Decimal("70.0"),          # ~$1,000 notional
+        "asymmetric": True,
+        "hedge_ratio": Decimal("0.0"),
+        "timeout_bars": 50,
+    },
+    "HYPEUSDT": {
+        "candle_interval": "60",
+        "ema_fast": 9,
+        "ema_slow": 21,
+        "macro_ema_period": 200,
+        "use_macro_trend_filter": True,
+        "adx_min": Decimal("20"),
+        "adx_period": 14,
+        "adx_rising_required": True,
+        "d_pct": Decimal("0.80"),
+        "use_dynamic_atr": True,
+        "atr_mult": Decimal("0.85"),
+        "b1_confirm": Decimal("0.35"),
+        "b2_confirm": Decimal("1.00"),
+        "b2_upsize": False,
+        "sl_pct": Decimal("0.38"),
+        "tp_pct": Decimal("2.00"),
+        "b1_tp_mult": Decimal("2.50"),
+        "b1_r1_trig": Decimal("1.00"),
+        "b1_r1_sl": Decimal("0.60"),
+        "b1_r2_trig": Decimal("1.50"),
+        "b1_r2_sl": Decimal("1.10"),
+        "size": Decimal("35.0"),          # ~$1,000 notional
+        "asymmetric": True,
+        "hedge_ratio": Decimal("0.0"),
+        "timeout_bars": 50,
+    },
+    "XMRUSDT": {
+        "candle_interval": "60",
+        "ema_fast": 9,
+        "ema_slow": 21,
+        "macro_ema_period": 200,
+        "use_macro_trend_filter": True,
+        "adx_min": Decimal("20"),
+        "adx_period": 14,
+        "adx_rising_required": True,
+        "d_pct": Decimal("0.80"),
+        "use_dynamic_atr": True,
+        "atr_mult": Decimal("0.85"),
+        "b1_confirm": Decimal("0.35"),
+        "b2_confirm": Decimal("1.50"),
+        "b2_upsize": False,
+        "sl_pct": Decimal("0.38"),
+        "tp_pct": Decimal("2.40"),
+        "b1_tp_mult": Decimal("3.00"),
+        "b1_r1_trig": Decimal("0.80"),
+        "b1_r1_sl": Decimal("0.40"),
+        "b1_r2_trig": Decimal("1.50"),
+        "b1_r2_sl": Decimal("1.10"),
+        "size": Decimal("6.0"),           # ~$1,000 notional
+        "asymmetric": True,
+        "hedge_ratio": Decimal("0.0"),
+        "timeout_bars": 50,
+    },
+    "DOGEUSDT": {
+        "candle_interval": "60",
+        "ema_fast": 9,
+        "ema_slow": 21,
+        "macro_ema_period": 200,
+        "use_macro_trend_filter": True,
+        "adx_min": Decimal("20"),
+        "adx_period": 14,
+        "adx_rising_required": True,
+        "d_pct": Decimal("0.80"),
+        "use_dynamic_atr": True,
+        "atr_mult": Decimal("0.85"),
+        "b1_confirm": Decimal("0.50"),
+        "b2_confirm": Decimal("1.50"),
+        "b2_upsize": False,
+        "sl_pct": Decimal("0.38"),
+        "tp_pct": Decimal("2.80"),
+        "b1_tp_mult": Decimal("3.50"),
+        "b1_r1_trig": Decimal("0.80"),
+        "b1_r1_sl": Decimal("0.40"),
+        "b1_r2_trig": Decimal("1.60"),
+        "b1_r2_sl": Decimal("1.20"),
+        "size": Decimal("7500.0"),        # ~$1,000 notional
+        "asymmetric": True,
+        "hedge_ratio": Decimal("0.0"),
         "timeout_bars": 50,
     },
     "XAUUSDT": {
-        "candle_interval": "5",
-        "ema_fast": 20,
-        "ema_slow": 50,
-        "adx_min": Decimal("15"),
+        "candle_interval": "60",
+        "ema_fast": 9,
+        "ema_slow": 21,
+        "macro_ema_period": 200,
+        "use_macro_trend_filter": True,
+        "adx_min": Decimal("20"),
         "adx_period": 14,
+        "adx_rising_required": True,
         "d_pct": Decimal("0.40"),
         "use_dynamic_atr": True,
         "atr_mult": Decimal("0.85"),
         "exhaustion_mult": Decimal("1.50"),
-        "confirm_mult": Decimal("0.80"),
+        "confirm_mult": Decimal("0.40"),
+        "b1_confirm": Decimal("0.40"),
+        "b2_confirm": Decimal("1.00"),
+        "b2_upsize": False,
         "sl_pct": Decimal("0.40"),
-        "tp_pct": Decimal("0.80"),
-        "b1_tp_mult": Decimal("2.00"),
-        "b1_r1_trig": Decimal("1.40"),
-        "b1_r1_sl": Decimal("1.00"),
-        "b1_r2_trig": Decimal("2.20"),
-        "b1_r2_sl": Decimal("1.70"),
+        "tp_pct": Decimal("2.40"),
+        "b1_tp_mult": Decimal("3.00"),
+        "b1_r1_trig": Decimal("1.00"),
+        "b1_r1_sl": Decimal("0.60"),
+        "b1_r2_trig": Decimal("1.50"),
+        "b1_r2_sl": Decimal("1.10"),
         "b2_tp_mult": Decimal("2.00"),
         "b2_be_cushion": Decimal("0.10"),
         "b2_r2_trig": Decimal("2.50"),
@@ -125,9 +284,9 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "ratchet_step_pct": Decimal("0.25"),
         "be_lock": True,
         "be_buffer_pct": Decimal("0.20"),
-        "size": Decimal("0.01"),
+        "size": Decimal("1.5"),
         "asymmetric": True,
-        "hedge_ratio": Decimal("0.30"),
+        "hedge_ratio": Decimal("0.0"),    # PURE SINGLE-LEG (NO COUNTER)
         "timeout_bars": 50,
     },
 }
@@ -160,9 +319,15 @@ class SymbolConfig:
     ratchet_step_pct: Decimal = Decimal("0.25")
     be_lock: bool = True
     be_buffer_pct: Decimal = Decimal("0.38")
+    macro_ema_period: int = 200
+    use_macro_trend_filter: bool = True
+    adx_rising_required: bool = True
+    b1_confirm: Decimal = Decimal("0.40")
+    b2_confirm: Decimal = Decimal("1.00")
+    b2_upsize: bool = False
     size: Decimal = Decimal("0.001")
     asymmetric: bool = True
-    hedge_ratio: Decimal = Decimal("0.30")
+    hedge_ratio: Decimal = Decimal("0.0")
     timeout_bars: int = 50
 
     @classmethod
@@ -404,9 +569,9 @@ class Config:
                             help="Use Bybit Testnet (default)")
         parser.add_argument("--mainnet", action="store_true", help="Use Bybit Mainnet")
 
-        # Symbols selection: e.g. --symbols BTCUSDT,ETHUSDT,SOLUSDT
-        parser.add_argument("--symbols", default=os.getenv("SYMBOLS", "BTCUSDT,ETHUSDT,SOLUSDT"),
-                            help="Comma-separated symbols to trade concurrently (default: BTCUSDT,ETHUSDT,SOLUSDT)")
+        # Symbols selection: e.g. --symbols AVAXUSDT,LINKUSDT,HYPEUSDT,XMRUSDT,DOGEUSDT,BTCUSDT,ETHUSDT,SOLUSDT
+        parser.add_argument("--symbols", default=os.getenv("SYMBOLS", "AVAXUSDT,LINKUSDT,HYPEUSDT,XMRUSDT,DOGEUSDT,BTCUSDT,ETHUSDT,SOLUSDT"),
+                            help="Comma-separated symbols to trade concurrently (default: 8 champion universe)")
         parser.add_argument("--symbol", default=os.getenv("SYMBOL", None),
                             help="Single symbol override (e.g. --symbol XAUUSDT)")
 

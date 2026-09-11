@@ -22,84 +22,108 @@ TAKER_FEE_RATE = 0.00055  # Bybit VIP0 Taker fee: 0.055%
 # Default champion profiles
 CHAMPION_PROFILES: Dict[str, Dict[str, Any]] = {
     "BTCUSDT": {
-        "d_pct": 0.70,
+        "d_pct": 0.80,
         "use_dynamic_atr": True,
         "atr_mult": 0.85,
         "exhaustion_mult": 1.50,
-        "confirm_mult": 0.80,
-        "b1_tp_mult": 2.00,
-        "b1_r1_trig": 1.40,
-        "b1_r1_sl": 1.00,
-        "b1_r2_trig": 2.20,
-        "b1_r2_sl": 1.70,
+        "confirm_mult": 0.35,
+        "b1_confirm": 0.35,
+        "b2_confirm": 1.20,
+        "b1_tp_mult": 3.50,
+        "b1_r1_trig": 1.00,
+        "b1_r1_sl": 0.60,
+        "b1_r2_trig": 1.30,
+        "b1_r2_sl": 0.90,
         "b2_tp_mult": 2.00,
         "b2_be_cushion": 0.10,
         "b2_r2_trig": 2.50,
         "b2_r2_sl": 2.10,
-        "adx_min": 15.0,
+        "adx_min": 20.0,
+        "adx_rising_required": True,
+        "use_macro_trend_filter": True,
+        "macro_ema_period": 200,
         "timeout_bars": 50,
-        "hedge_ratio": 0.30,
-        "leverage": 2.5,
+        "hedge_ratio": 0.0,
+        "leverage": 4.0,
+        "b2_upsize": False,
     },
     "ETHUSDT": {
         "d_pct": 0.80,
         "use_dynamic_atr": True,
         "atr_mult": 0.85,
         "exhaustion_mult": 1.50,
-        "confirm_mult": 0.80,
-        "b1_tp_mult": 2.00,
-        "b1_r1_trig": 1.40,
-        "b1_r1_sl": 1.00,
-        "b1_r2_trig": 2.20,
-        "b1_r2_sl": 1.70,
+        "confirm_mult": 0.40,
+        "b1_confirm": 0.40,
+        "b2_confirm": 1.00,
+        "b1_tp_mult": 3.20,
+        "b1_r1_trig": 0.80,
+        "b1_r1_sl": 0.40,
+        "b1_r2_trig": 1.40,
+        "b1_r2_sl": 1.00,
         "b2_tp_mult": 2.00,
         "b2_be_cushion": 0.10,
         "b2_r2_trig": 2.50,
         "b2_r2_sl": 2.10,
-        "adx_min": 0.0,
+        "adx_min": 20.0,
+        "adx_rising_required": True,
+        "use_macro_trend_filter": True,
+        "macro_ema_period": 200,
         "timeout_bars": 50,
-        "hedge_ratio": 0.30,
-        "leverage": 2.5,
+        "hedge_ratio": 0.0,
+        "leverage": 4.0,
+        "b2_upsize": False,
     },
     "SOLUSDT": {
         "d_pct": 0.80,
         "use_dynamic_atr": True,
         "atr_mult": 0.85,
         "exhaustion_mult": 1.50,
-        "confirm_mult": 0.80,
-        "b1_tp_mult": 2.00,
-        "b1_r1_trig": 1.40,
-        "b1_r1_sl": 1.00,
-        "b1_r2_trig": 2.20,
-        "b1_r2_sl": 1.70,
+        "confirm_mult": 0.40,
+        "b1_confirm": 0.40,
+        "b2_confirm": 1.00,
+        "b1_tp_mult": 3.20,
+        "b1_r1_trig": 1.00,
+        "b1_r1_sl": 0.60,
+        "b1_r2_trig": 1.60,
+        "b1_r2_sl": 1.20,
         "b2_tp_mult": 2.00,
         "b2_be_cushion": 0.10,
         "b2_r2_trig": 2.50,
         "b2_r2_sl": 2.10,
-        "adx_min": 15.0,
+        "adx_min": 20.0,
+        "adx_rising_required": True,
+        "use_macro_trend_filter": True,
+        "macro_ema_period": 200,
         "timeout_bars": 50,
-        "hedge_ratio": 0.30,
-        "leverage": 2.5,
+        "hedge_ratio": 0.0,
+        "leverage": 4.0,
+        "b2_upsize": False,
     },
     "PAXGUSDT": {
-        "d_pct": 0.50,
+        "d_pct": 0.40,
         "use_dynamic_atr": True,
         "atr_mult": 0.85,
         "exhaustion_mult": 1.50,
-        "confirm_mult": 0.80,
-        "b1_tp_mult": 2.00,
-        "b1_r1_trig": 1.40,
-        "b1_r1_sl": 1.00,
-        "b1_r2_trig": 2.00,
-        "b1_r2_sl": 1.50,
+        "confirm_mult": 0.40,
+        "b1_confirm": 0.40,
+        "b2_confirm": 1.00,
+        "b1_tp_mult": 3.00,
+        "b1_r1_trig": 1.00,
+        "b1_r1_sl": 0.60,
+        "b1_r2_trig": 1.50,
+        "b1_r2_sl": 1.10,
         "b2_tp_mult": 2.00,
         "b2_be_cushion": 0.10,
         "b2_r2_trig": 2.50,
         "b2_r2_sl": 2.10,
-        "adx_min": 15.0,
+        "adx_min": 20.0,
+        "adx_rising_required": True,
+        "use_macro_trend_filter": True,
+        "macro_ema_period": 200,
         "timeout_bars": 50,
-        "hedge_ratio": 0.30,
-        "leverage": 2.5,
+        "hedge_ratio": 0.0,
+        "leverage": 4.0,
+        "b2_upsize": False,
     },
 }
 
@@ -381,8 +405,10 @@ class ReplayEngine:
             prof.update(custom_params)
 
         d_pct = float(prof["d_pct"])
-        d_val = d_pct / 100.0
-        confirm_mult = float(prof["confirm_mult"])
+        confirm_mult = float(prof.get("confirm_mult", 0.40))
+        b1_confirm = float(prof.get("b1_confirm", confirm_mult))
+        b2_confirm = float(prof.get("b2_confirm", 1.00))
+        b2_upsize = bool(prof.get("b2_upsize", False))
         b1_tp_mult = float(prof["b1_tp_mult"])
         b1_r1_trig = float(prof["b1_r1_trig"])
         b1_r1_sl = float(prof["b1_r1_sl"])
@@ -420,13 +446,24 @@ class ReplayEngine:
         cross_up = (ema_fast[:-1] <= ema_slow[:-1]) & (ema_fast[1:] > ema_slow[1:])
         cross_down = (ema_fast[:-1] >= ema_slow[:-1]) & (ema_fast[1:] < ema_slow[1:])
 
+        use_macro_trend_filter = bool(prof.get("use_macro_trend_filter", True))
+        macro_ema_period = int(prof.get("macro_ema_period", 200))
+        adx_rising_required = bool(prof.get("adx_rising_required", True))
+        ema_macro = calc_ema(closes, macro_ema_period) if (use_macro_trend_filter and n >= macro_ema_period) else None
+
         sig_indices = []
         sig_directions = []
-        for i in range(25, n - 1):
-            if cross_up[i - 1] and (adx_min <= 0 or adx[i] >= adx_min):
+        start_bar = macro_ema_period if (use_macro_trend_filter and ema_macro is not None) else 25
+        for i in range(start_bar, n - 1):
+            macro_bull = closes[i] > ema_macro[i] if ema_macro is not None else True
+            macro_bear = closes[i] < ema_macro[i] if ema_macro is not None else True
+            adx_ok = (adx_min <= 0 or adx[i] >= adx_min)
+            rising_ok = (adx[i] > adx[i-1]) if adx_rising_required else True
+
+            if cross_up[i - 1] and macro_bull and adx_ok and rising_ok:
                 sig_indices.append(i)
                 sig_directions.append("bullish")
-            elif cross_down[i - 1] and (adx_min <= 0 or adx[i] >= adx_min):
+            elif cross_down[i - 1] and macro_bear and adx_ok and rising_ok:
                 sig_indices.append(i)
                 sig_directions.append("bearish")
 
@@ -530,118 +567,136 @@ class ReplayEngine:
                         # -------------------------------------------------------------
                         if phase == "INCUBATION":
                             if direction == "bullish":
-                                # Check Branch 1 (+0.80D)
-                                if p >= p0 * (1.0 + confirm_mult * d_val):
+                                # Check Branch 1 (+0.35D to +0.40D Expansion)
+                                if p >= p0 * (1.0 + b1_confirm * d_val):
                                     phase = "RUNNER_B1"
                                     b1_armed = True
                                     confirm_px = p
-                                    # Collapse 30% Short counter leg
-                                    c_loss = (p0 - confirm_px) * counter_qty
-                                    c_fees = (counter_qty * confirm_px) * TAKER_FEE_RATE
-                                    trapped_loss = c_loss
-                                    trapped_fees += c_fees
-                                    total_fees += c_fees
+                                    if counter_qty > 0:
+                                        c_loss = (p0 - confirm_px) * counter_qty
+                                        c_fees = (counter_qty * confirm_px) * TAKER_FEE_RATE
+                                        trapped_loss = c_loss
+                                        trapped_fees += c_fees
+                                        total_fees += c_fees
 
-                                    # Arm 100% Long Runner Zero-Loss Stop Loss
-                                    # Gain required: |c_loss| + all roundtrip fees
                                     fee_buf = TAKER_FEE_RATE * 4.0
-                                    primary_sl = p0 * (1.0 + (hedge_ratio * confirm_mult * d_val) + fee_buf)
+                                    primary_sl = p0 * (1.0 + (hedge_ratio * b1_confirm * d_val) + fee_buf)
                                     primary_tp = p0 * (1.0 + b1_tp_mult * d_val)
+                                    continue
 
-                                # Check Branch 2 (-0.80D Trap)
-                                elif p <= p0 * (1.0 - confirm_mult * d_val):
-                                    phase = "RUNNER_B2"
-                                    confirm_px = p
-                                    exhaustion_level = p0 * (1.0 - exhaustion_mult * d_val)
-                                    b2_tp_level = p0 * (1.0 - b2_tp_mult * d_val)
-
-                                    # Collapse Trapped 100% Long
-                                    t_loss = (confirm_px - p0) * primary_qty
-                                    t_fees = (primary_qty * confirm_px) * TAKER_FEE_RATE
-                                    trapped_loss = t_loss
-                                    trapped_fees += t_fees
-                                    total_fees += t_fees
-
-                                    # EXHAUSTION GUARD CHECK
-                                    if p <= exhaustion_level or p <= b2_tp_level:
-                                        # Flash dump overshot! Abort upsize, close 30% short for profit
-                                        exhaustion_triggered = True
-                                        c_gain = (p0 - p) * counter_qty
-                                        c_fee = (counter_qty * p) * TAKER_FEE_RATE
-                                        counter_profit = c_gain
-                                        total_fees += c_fee
+                                # Check Branch 2 (-1.00D to -1.20D Trap)
+                                elif p <= p0 * (1.0 - b2_confirm * d_val):
+                                    if not b2_upsize or hedge_ratio == 0.0:
+                                        t_loss = (p - p0) * primary_qty
+                                        t_fees = (primary_qty * p) * TAKER_FEE_RATE
+                                        c_gain = (p0 - p) * counter_qty if counter_qty > 0 else 0.0
+                                        c_fees = (counter_qty * p) * TAKER_FEE_RATE if counter_qty > 0 else 0.0
+                                        counter_profit = t_loss + c_gain
+                                        total_fees += t_fees + c_fees
                                         exit_px = p
-                                        cycle_scenario = "SCENARIO_EXHAUSTION_GUARD"
+                                        cycle_scenario = "SCENARIO_5_B2_WHIPSAW"
                                         cycle_done = True
                                         break
                                     else:
-                                        # Normal Scenario 5 Size-Flip (+70% notional added)
-                                        b2_armed = True
-                                        upsize_qty = primary_qty - counter_qty
-                                        upsize_fee = (upsize_qty * confirm_px) * TAKER_FEE_RATE
-                                        total_fees += upsize_fee
-                                        # Blended Short Entry Price
-                                        blended_b2_entry = (counter_qty * p0 + upsize_qty * confirm_px) / primary_qty
-                                        # True Breakeven Price: price level needed to cover trapped loss + all fees
-                                        total_drain = abs(trapped_loss) + trapped_fees + upsize_fee + (primary_qty * blended_b2_entry * TAKER_FEE_RATE * 2.0)
-                                        true_be_sl = blended_b2_entry - (total_drain / primary_qty)
-                                        primary_sl = p0  # Initial stop loss at P0 (above current price)
-                                        b2_fast_be_locked = False
+                                        phase = "RUNNER_B2"
+                                        confirm_px = p
+                                        exhaustion_level = p0 * (1.0 - exhaustion_mult * d_val)
+                                        b2_tp_level = p0 * (1.0 - b2_tp_mult * d_val)
+
+                                        # Collapse Trapped 100% Long
+                                        t_loss = (confirm_px - p0) * primary_qty
+                                        t_fees = (primary_qty * confirm_px) * TAKER_FEE_RATE
+                                        trapped_loss = t_loss
+                                        trapped_fees += t_fees
+                                        total_fees += t_fees
+
+                                        # EXHAUSTION GUARD CHECK
+                                        if p <= exhaustion_level or p <= b2_tp_level:
+                                            exhaustion_triggered = True
+                                            c_gain = (p0 - p) * counter_qty
+                                            c_fee = (counter_qty * p) * TAKER_FEE_RATE
+                                            counter_profit = c_gain
+                                            total_fees += c_fee
+                                            exit_px = p
+                                            cycle_scenario = "SCENARIO_EXHAUSTION_GUARD"
+                                            cycle_done = True
+                                            break
+                                        else:
+                                            b2_armed = True
+                                            upsize_qty = primary_qty - counter_qty
+                                            upsize_fee = (upsize_qty * confirm_px) * TAKER_FEE_RATE
+                                            total_fees += upsize_fee
+                                            blended_b2_entry = (counter_qty * p0 + upsize_qty * confirm_px) / primary_qty
+                                            total_drain = abs(trapped_loss) + trapped_fees + upsize_fee + (primary_qty * blended_b2_entry * TAKER_FEE_RATE * 2.0)
+                                            true_be_sl = blended_b2_entry - (total_drain / primary_qty)
+                                            primary_sl = p0
+                                            b2_fast_be_locked = False
 
                             else:  # Bearish entry
-                                # Check Branch 1 (-0.80D Expansion down)
-                                if p <= p0 * (1.0 - confirm_mult * d_val):
+                                # Check Branch 1 (-0.35D to -0.40D Expansion down)
+                                if p <= p0 * (1.0 - b1_confirm * d_val):
                                     phase = "RUNNER_B1"
                                     b1_armed = True
                                     confirm_px = p
-                                    # Collapse 30% Long counter leg
-                                    c_loss = (confirm_px - p0) * counter_qty
-                                    c_fees = (counter_qty * confirm_px) * TAKER_FEE_RATE
-                                    trapped_loss = c_loss
-                                    trapped_fees += c_fees
-                                    total_fees += c_fees
+                                    if counter_qty > 0:
+                                        c_loss = (confirm_px - p0) * counter_qty
+                                        c_fees = (counter_qty * confirm_px) * TAKER_FEE_RATE
+                                        trapped_loss = c_loss
+                                        trapped_fees += c_fees
+                                        total_fees += c_fees
 
                                     fee_buf = TAKER_FEE_RATE * 4.0
-                                    primary_sl = p0 * (1.0 - (hedge_ratio * confirm_mult * d_val) - fee_buf)
+                                    primary_sl = p0 * (1.0 - (hedge_ratio * b1_confirm * d_val) - fee_buf)
                                     primary_tp = p0 * (1.0 - b1_tp_mult * d_val)
+                                    continue
 
-                                # Check Branch 2 (+0.80D Trap up)
-                                elif p >= p0 * (1.0 + confirm_mult * d_val):
-                                    phase = "RUNNER_B2"
-                                    confirm_px = p
-                                    exhaustion_level = p0 * (1.0 + exhaustion_mult * d_val)
-                                    b2_tp_level = p0 * (1.0 + b2_tp_mult * d_val)
-
-                                    # Collapse Trapped 100% Short
-                                    t_loss = (p0 - confirm_px) * primary_qty
-                                    t_fees = (primary_qty * confirm_px) * TAKER_FEE_RATE
-                                    trapped_loss = t_loss
-                                    trapped_fees += t_fees
-                                    total_fees += t_fees
-
-                                    # EXHAUSTION GUARD CHECK
-                                    if p >= exhaustion_level or p >= b2_tp_level:
-                                        # Flash pump overshot!
-                                        exhaustion_triggered = True
-                                        c_gain = (p - p0) * counter_qty
-                                        c_fee = (counter_qty * p) * TAKER_FEE_RATE
-                                        counter_profit = c_gain
-                                        total_fees += c_fee
+                                # Check Branch 2 (+1.00D to +1.20D Trap up)
+                                elif p >= p0 * (1.0 + b2_confirm * d_val):
+                                    if not b2_upsize or hedge_ratio == 0.0:
+                                        t_loss = (p0 - p) * primary_qty
+                                        t_fees = (primary_qty * p) * TAKER_FEE_RATE
+                                        c_gain = (p - p0) * counter_qty if counter_qty > 0 else 0.0
+                                        c_fees = (counter_qty * p) * TAKER_FEE_RATE if counter_qty > 0 else 0.0
+                                        counter_profit = t_loss + c_gain
+                                        total_fees += t_fees + c_fees
                                         exit_px = p
-                                        cycle_scenario = "SCENARIO_EXHAUSTION_GUARD"
+                                        cycle_scenario = "SCENARIO_5_B2_WHIPSAW"
                                         cycle_done = True
                                         break
                                     else:
-                                        # Normal Scenario 5 Size-Flip
-                                        b2_armed = True
-                                        upsize_qty = primary_qty - counter_qty
-                                        upsize_fee = (upsize_qty * confirm_px) * TAKER_FEE_RATE
-                                        total_fees += upsize_fee
-                                        blended_b2_entry = (counter_qty * p0 + upsize_qty * confirm_px) / primary_qty
-                                        total_drain = abs(trapped_loss) + trapped_fees + upsize_fee + (primary_qty * blended_b2_entry * TAKER_FEE_RATE * 2.0)
-                                        true_be_sl = blended_b2_entry + (total_drain / primary_qty)
-                                        primary_sl = p0  # Initial stop loss at P0 (below current price)
-                                        b2_fast_be_locked = False
+                                        phase = "RUNNER_B2"
+                                        confirm_px = p
+                                        exhaustion_level = p0 * (1.0 + exhaustion_mult * d_val)
+                                        b2_tp_level = p0 * (1.0 + b2_tp_mult * d_val)
+
+                                        # Collapse Trapped 100% Short
+                                        t_loss = (p0 - confirm_px) * primary_qty
+                                        t_fees = (primary_qty * confirm_px) * TAKER_FEE_RATE
+                                        trapped_loss = t_loss
+                                        trapped_fees += t_fees
+                                        total_fees += t_fees
+
+                                        # EXHAUSTION GUARD CHECK
+                                        if p >= exhaustion_level or p >= b2_tp_level:
+                                            exhaustion_triggered = True
+                                            c_gain = (p - p0) * counter_qty
+                                            c_fee = (counter_qty * p) * TAKER_FEE_RATE
+                                            counter_profit = c_gain
+                                            total_fees += c_fee
+                                            exit_px = p
+                                            cycle_scenario = "SCENARIO_EXHAUSTION_GUARD"
+                                            cycle_done = True
+                                            break
+                                        else:
+                                            b2_armed = True
+                                            upsize_qty = primary_qty - counter_qty
+                                            upsize_fee = (upsize_qty * confirm_px) * TAKER_FEE_RATE
+                                            total_fees += upsize_fee
+                                            blended_b2_entry = (counter_qty * p0 + upsize_qty * confirm_px) / primary_qty
+                                            total_drain = abs(trapped_loss) + trapped_fees + upsize_fee + (primary_qty * blended_b2_entry * TAKER_FEE_RATE * 2.0)
+                                            true_be_sl = blended_b2_entry + (total_drain / primary_qty)
+                                            primary_sl = p0
+                                            b2_fast_be_locked = False
 
                         # -------------------------------------------------------------
                         # 2. RUNNER BRANCH 1 (Signal was right)

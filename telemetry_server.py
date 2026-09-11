@@ -981,6 +981,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             p_phase = p.get("phase", "SCANNING")
             fast_e = p.get("fast_ema")
             slow_e = p.get("slow_ema")
+            adx = p.get("adx")
             # Check if pair is offline on testnet
             is_testnet = (state.get("network") == "TESTNET")
             is_offline = (sym == "AVAXUSDT" and is_testnet) or (px is None and fast_e is None and is_testnet)

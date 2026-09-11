@@ -715,16 +715,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             md.append(f"- **Account Equity**: `${equity:,.2f} USDT` | **Available Margin**: `${avail:,.2f} USDT`")
         md.append(f"- **Realized PnL**: `${total_pnl:+.2f} USDT` across `{trades_cnt}` closed Bybit trades | **Open PnL**: `${open_pnl:+.2f}`")
         target_universe = ["AVAXUSDT", "LINKUSDT", "HYPEUSDT", "DOGEUSDT", "XMRUSDT", "BTCUSDT", "ETHUSDT", "SOLUSDT"]
-        display_syms = list(target_universe)
-        for s in sym_pnl.keys():
-            if s not in display_syms:
-                display_syms.append(s)
-        
-        sym_parts = []
-        for k in display_syms:
-            val = sym_pnl.get(k, 0.0)
-            tag = " (Legacy)" if k not in target_universe else ""
-            sym_parts.append(f"{k}{tag}: `${val:+.2f}`")
+        sym_parts = [f"{k}: `${sym_pnl.get(k, 0.0):+.2f}`" for k in target_universe]
         md.append(f"- **Realized PnL by Symbol**: {' | '.join(sym_parts)}")
         md.append("")
 
@@ -1256,20 +1247,10 @@ class TelemetryHandler(BaseHTTPRequestHandler):
               <td style="color:#64748b; font-size:11px; white-space:nowrap;">{ts_display}</td>
             </tr>""")
 
-        # PnL by symbol badges across all target universe assets + legacy
+        # PnL by symbol badges across targeted 8 assets ONLY (no legacy pairs)
         target_universe = ["AVAXUSDT", "LINKUSDT", "HYPEUSDT", "DOGEUSDT", "XMRUSDT", "BTCUSDT", "ETHUSDT", "SOLUSDT"]
-        active_pairs_list = list(pairs.keys()) if pairs else target_universe
-        
-        display_symbols = list(active_pairs_list)
-        for s in target_universe:
-            if s not in display_symbols:
-                display_symbols.append(s)
-        for s in sym_pnl.keys():
-            if s not in display_symbols:
-                display_symbols.append(s)
-
         pnl_badges = []
-        for s_sym in display_symbols:
+        for s_sym in target_universe:
             if s_sym in sym_pnl:
                 s_val = float(sym_pnl[s_sym])
                 if s_val > 0:
@@ -1285,14 +1266,10 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                 s_col = "#64748b"
                 val_str = "$0.00"
 
-            legacy_tag = ' <span style="font-size:9px; color:#64748b; font-weight:400;">(Legacy)</span>' if s_sym not in target_universe else ''
-            badge_border = "#1e293b" if s_sym in target_universe else "#151e2e"
-            badge_bg = "#070d19"
-
             pnl_badges.append(
-                f'<div style="display:flex; align-items:center; gap:6px; background:{badge_bg}; padding:3px 8px; border-radius:4px; border:1px solid {badge_border};">'
+                f'<div class="pnl-badge-item" style="display:flex; align-items:center; gap:6px; background:#070d19; padding:4px 8px; border-radius:4px; border:1px solid #1e293b;">'
                 f'{get_coin_icon(s_sym, size=15)}'
-                f'<span style="font-weight:500; font-size:11px;">{s_sym}{legacy_tag}:</span>'
+                f'<span style="font-weight:500; font-size:11px;">{s_sym}:</span>'
                 f'<b style="color:{s_col}; font-family:\'JetBrains Mono\', monospace; font-size:11px;">{val_str}</b>'
                 f'</div>'
             )
@@ -1869,6 +1846,179 @@ class TelemetryHandler(BaseHTTPRequestHandler):
       word-break: break-all;
       line-height: 1.6;
     }}
+
+    /* =========================================================================
+       Mobile Responsive Styles (< 768px and < 480px)
+       ========================================================================= */
+    @media (max-width: 768px) {{
+      body {{
+        padding: 10px;
+      }}
+      .container {{
+        width: 100%;
+      }}
+      header {{
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+        margin-bottom: 12px;
+        padding-bottom: 12px;
+      }}
+      .brand {{
+        justify-content: space-between;
+        width: 100%;
+      }}
+      .brand h1 {{
+        font-size: 15px;
+      }}
+      .header-actions {{
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 6px;
+        width: 100%;
+      }}
+      .header-actions .btn {{
+        justify-content: center;
+        padding: 7px 2px;
+        font-size: 11px;
+        text-align: center;
+      }}
+      .strategy-banner {{
+        flex-direction: column;
+        align-items: stretch;
+        padding: 10px 12px;
+        gap: 10px;
+        margin-bottom: 12px;
+      }}
+      .strat-sub {{
+        font-size: 11.5px;
+        line-height: 1.4;
+      }}
+      .strat-limits {{
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 6px;
+        width: 100%;
+      }}
+      .limit-pill {{
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: 6px 4px;
+        font-size: 10.5px;
+        gap: 2px;
+      }}
+      .stats-grid {{
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+        margin-bottom: 12px;
+      }}
+      .stats-grid .card:last-child {{
+        grid-column: span 2;
+      }}
+      .card {{
+        padding: 10px 12px;
+      }}
+      .stat-title {{
+        font-size: 10px;
+        margin-bottom: 4px;
+      }}
+      .stat-val {{
+        font-size: 17px;
+      }}
+      .stat-sub {{
+        font-size: 10px;
+        margin-top: 2px;
+      }}
+      .pnl-strip-card {{
+        flex-direction: column !important;
+        align-items: stretch !important;
+        gap: 8px !important;
+        padding: 10px 12px !important;
+        margin-bottom: 14px !important;
+      }}
+      #pnl-by-symbol {{
+        display: grid !important;
+        grid-template-columns: repeat(2, 1fr) !important;
+        gap: 6px !important;
+        width: 100% !important;
+      }}
+      .pnl-badge-item {{
+        display: flex !important;
+        justify-content: space-between !important;
+        padding: 5px 8px !important;
+      }}
+      .section-title {{
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
+        margin: 18px 0 10px;
+        font-size: 12px;
+      }}
+      .markets-grid {{
+        grid-template-columns: 1fr;
+        gap: 10px;
+        margin-bottom: 16px;
+      }}
+      .market-card {{
+        padding: 12px;
+      }}
+      .table-container {{
+        border-radius: 6px;
+        -webkit-overflow-scrolling: touch;
+      }}
+      table {{
+        font-size: 11px;
+      }}
+      th, td {{
+        padding: 8px 10px;
+        white-space: nowrap;
+      }}
+      .trades-header-wrap {{
+        flex-direction: column !important;
+        align-items: stretch !important;
+        gap: 8px !important;
+      }}
+      .trade-tabs-nav {{
+        width: 100%;
+        display: grid;
+        grid-template-columns: 1fr 1fr auto;
+        gap: 6px;
+      }}
+      .trade-tab-btn {{
+        justify-content: center;
+        padding: 7px 6px;
+        font-size: 11px;
+      }}
+      .pagination-bar {{
+        flex-direction: column;
+        gap: 8px;
+        align-items: center;
+        padding: 8px 12px;
+      }}
+      .terminal {{
+        font-size: 10px;
+        padding: 10px;
+        max-height: 250px;
+      }}
+    }}
+
+    @media (max-width: 360px) {{
+      .stats-grid {{
+        grid-template-columns: 1fr;
+      }}
+      .stats-grid .card:last-child {{
+        grid-column: span 1;
+      }}
+      #pnl-by-symbol {{
+        grid-template-columns: 1fr !important;
+      }}
+      .strat-limits {{
+        grid-template-columns: 1fr;
+      }}
+    }}
   </style>
 </head>
 <body>
@@ -1904,9 +2054,9 @@ class TelemetryHandler(BaseHTTPRequestHandler):
     </div>
 
     <!-- PnL by Symbol Strip -->
-    <div class="card" style="margin-bottom:20px; padding:10px 16px; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; background:#0b1329;">
+    <div class="card pnl-strip-card" style="margin-bottom:20px; padding:10px 16px; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; background:#0b1329;">
       <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:#94a3b8; letter-spacing:0.5px;">Bybit Realized P&L by Symbol:</div>
-      <div id="pnl-by-symbol" style="display:flex; flex-wrap:wrap; gap:14px; font-family:'JetBrains Mono', monospace; font-size:12px;">
+      <div id="pnl-by-symbol" style="display:flex; flex-wrap:wrap; gap:8px; font-family:'JetBrains Mono', monospace; font-size:12px;">
         {d['pnl_by_symbol_html']}
       </div>
     </div>
@@ -1930,7 +2080,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
     </div>
 
     <!-- Trade Audit Ledgers -->
-    <div class="section-title">
+    <div class="section-title trades-header-wrap">
       <span>Trade Execution &amp; Audit Ledgers</span>
       <div class="trade-tabs-nav">
         <button id="trade-tab-csv" class="trade-tab-btn active" onclick="switchTradeTab('csv')">

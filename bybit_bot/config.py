@@ -23,8 +23,8 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "use_dynamic_atr": True,
         "atr_mult": Decimal("0.85"),
         "exhaustion_mult": Decimal("1.50"),
-        "confirm_mult": Decimal("0.60"),
-        "b1_confirm": Decimal("0.60"),    # Move to BE at +0.60D (gives ~0.40D cushion)
+        "confirm_mult": Decimal("0.40"),
+        "b1_confirm": Decimal("0.40"),    # Move to BE at +0.40D
         "b2_confirm": Decimal("1.20"),    # Initial SL barrier at -1.20D
         "b2_upsize": False,               # Pure Single-Leg (No upsize)
         "sl_pct": Decimal("0.34"),
@@ -61,8 +61,8 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "use_dynamic_atr": True,
         "atr_mult": Decimal("0.85"),
         "exhaustion_mult": Decimal("1.50"),
-        "confirm_mult": Decimal("0.60"),
-        "b1_confirm": Decimal("0.60"),    # Move to BE at +0.60D (gives ~0.40D cushion)
+        "confirm_mult": Decimal("0.40"),
+        "b1_confirm": Decimal("0.40"),    # Move to BE at +0.40D
         "b2_confirm": Decimal("1.00"),    # Initial SL barrier at -1.00D
         "b2_upsize": False,
         "sl_pct": Decimal("0.38"),
@@ -99,8 +99,8 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "use_dynamic_atr": True,
         "atr_mult": Decimal("0.85"),
         "exhaustion_mult": Decimal("1.50"),
-        "confirm_mult": Decimal("0.60"),
-        "b1_confirm": Decimal("0.60"),    # Move to BE at +0.60D (gives ~0.40D cushion)
+        "confirm_mult": Decimal("0.40"),
+        "b1_confirm": Decimal("0.40"),    # Move to BE at +0.40D
         "b2_confirm": Decimal("1.00"),    # Initial SL barrier at -1.00D
         "b2_upsize": False,
         "sl_pct": Decimal("0.38"),
@@ -136,8 +136,8 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "d_pct": Decimal("0.80"),
         "use_dynamic_atr": True,
         "atr_mult": Decimal("0.85"),
-        "confirm_mult": Decimal("0.60"),
-        "b1_confirm": Decimal("0.60"),
+        "confirm_mult": Decimal("0.40"),
+        "b1_confirm": Decimal("0.40"),
         "b2_confirm": Decimal("1.20"),
         "b2_upsize": False,
         "sl_pct": Decimal("0.38"),
@@ -166,8 +166,8 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "d_pct": Decimal("0.80"),
         "use_dynamic_atr": True,
         "atr_mult": Decimal("0.85"),
-        "confirm_mult": Decimal("0.60"),
-        "b1_confirm": Decimal("0.60"),
+        "confirm_mult": Decimal("0.40"),
+        "b1_confirm": Decimal("0.40"),
         "b2_confirm": Decimal("1.50"),
         "b2_upsize": False,
         "sl_pct": Decimal("0.38"),
@@ -256,8 +256,8 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "d_pct": Decimal("0.80"),
         "use_dynamic_atr": True,
         "atr_mult": Decimal("0.85"),
-        "confirm_mult": Decimal("0.60"),
-        "b1_confirm": Decimal("0.60"),
+        "confirm_mult": Decimal("0.40"),
+        "b1_confirm": Decimal("0.40"),
         "b2_confirm": Decimal("1.50"),
         "b2_upsize": False,
         "sl_pct": Decimal("0.38"),
@@ -343,7 +343,7 @@ class SymbolConfig:
     macro_ema_period: int = 200
     use_macro_trend_filter: bool = True
     adx_rising_required: bool = True
-    b1_confirm: Decimal = Decimal("0.60")
+    b1_confirm: Decimal = Decimal("0.40")
     b2_confirm: Decimal = Decimal("1.00")
     b2_upsize: bool = False
     size: Decimal = Decimal("0.001")
@@ -381,6 +381,12 @@ class SymbolConfig:
                 except Exception: pass
             if os.getenv(f"{pfx}CONFIRM_MULT"):
                 try: params["confirm_mult"] = Decimal(os.getenv(f"{pfx}CONFIRM_MULT"))
+                except Exception: pass
+            if os.getenv(f"{pfx}B1_CONFIRM"):
+                try: params["b1_confirm"] = Decimal(os.getenv(f"{pfx}B1_CONFIRM"))
+                except Exception: pass
+            if os.getenv(f"{pfx}B2_CONFIRM"):
+                try: params["b2_confirm"] = Decimal(os.getenv(f"{pfx}B2_CONFIRM"))
                 except Exception: pass
             if os.getenv(f"{pfx}SL_PCT"):
                 try: params["sl_pct"] = Decimal(os.getenv(f"{pfx}SL_PCT"))

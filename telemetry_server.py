@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Secure Password-Protected HTTP Telemetry & AI Monitoring Server
-Dedicated to Option A: Pure Single-Leg Trend Runner & Multi-Pair Concurrency Engine.
+# Dedicated to Bybit Single-Leg Trend Runner & Multi-Pair Concurrency Engine.
 Provides an authenticated dark-mode dashboard, JSON API, sanitized log viewer,
 and an AI-optimized Markdown summary endpoint (/api/ai-summary).
 """
@@ -662,7 +662,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
 
         data = {
             "status": "online" if svc.get("active", True) else "offline",
-            "strategy": "Option A: Pure Single-Leg Trend Runner & Zero-Loss Ratchet",
+            "strategy": "Single-Leg Trend Runner & Zero-Loss Ratchet",
             "service": svc,
             "account": {
                 "equity_usd": equity,
@@ -673,7 +673,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             },
             "concurrency": {
                 "active_pairs": state.get("active_pairs_count", 0),
-                "max_concurrent_pairs": state.get("max_concurrent_pairs", 3),
+                "max_concurrent_pairs": state.get("max_concurrent_pairs", 4),
                 "leverage": state.get("leverage", 4),
             },
             "timestamp": datetime.now().isoformat(),
@@ -701,13 +701,13 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         trades_cnt = state.get("total_trades_count") or acc.get("trades_count", 0)
 
         active_count = state.get("active_pairs_count", 0)
-        max_pairs = state.get("max_concurrent_pairs", 3)
+        max_pairs = state.get("max_concurrent_pairs", 4)
         network = state.get("network", "TESTNET")
         leverage = state.get("leverage", 4)
 
         md = []
         md.append(f"# Bybit Single-Leg Trend Runner: Live Telemetry Summary")
-        md.append(f"**Strategy**: Option A (Single-Leg Trend Runner & Zero-Loss Ratchet Engine)")
+        md.append(f"**Strategy**: Single-Leg Trend Runner & Zero-Loss Ratchet Engine")
         md.append(f"**Timestamp**: `{datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}` | **Service**: `{svc.get('status', 'active').upper()}` (PID: {svc.get('pid', 'N/A')})")
         md.append(f"- **Universe**: 8 Champion Pairs (`AVAX`, `LINK`, `HYPE`, `DOGE`, `XMR`, `BTC`, `ETH`, `SOL`)")
         md.append(f"- **Concurrency**: `{active_count}/{max_pairs}` Slots Active | **Leverage**: `{leverage}x` | **Uptime**: `{uptime_str}` | **Scans**: `{state.get('scan_count', 0)}`")
@@ -929,7 +929,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         recent_exchange_trades = state.get("exchange_recent_trades") or acc.get("recent_trades", [])
 
         active_count = state.get("active_pairs_count", 0)
-        max_concurrent = state.get("max_concurrent_pairs", 3)
+        max_concurrent = state.get("max_concurrent_pairs", 4)
         used_margin = active_count * 250.0
         avail_margin_slots = max(0, max_concurrent - active_count)
         reserve_cash = max(0.0, 1000.0 - used_margin)
@@ -1060,7 +1060,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                 active_positions_rows.append(f"""<tr>
                   <td>{render_coin_badge(sym)}</td>
                   <td><span class="badge {side_badge_cls}">{side_symbol}</span></td>
-                  <td><span class="badge primary">OPTION A RUNNER</span></td>
+                  <td><span class="badge primary">TREND RUNNER</span></td>
                   <td style="font-family:'JetBrains Mono';">{size_val} <span style="color:#64748b; font-size:11px;">{notional_str}</span></td>
                   <td style="font-family:'JetBrains Mono';">${entry_px:,.2f}</td>
                   <td style="font-family:'JetBrains Mono'; font-weight:700;">{px_val_str}</td>
@@ -1071,7 +1071,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
 
             else:
                 card_status_badge = '<span class="status-pill" style="border-color:#64748b; color:#94a3b8;">SCANNING</span>'
-                slot_info = '<span style="color:#10b981; font-size:11px;">⚡ Slot Available for Entry</span>' if avail_margin_slots > 0 else '<span style="color:#f59e0b; font-size:11px;">⏳ Waiting (Max 3 Active)</span>'
+                slot_info = '<span style="color:#10b981; font-size:11px;">⚡ Slot Available for Entry</span>' if avail_margin_slots > 0 else '<span style="color:#f59e0b; font-size:11px;">⏳ Waiting (Max 4 Active)</span>'
                 leg_card_html = f"""
                 <div class="leg-box empty" style="display:flex; flex-direction:column; align-items:center; justify-content:center; padding:16px 8px; text-align:center;">
                   <div style="font-size:11px; color:#94a3b8; margin-bottom:4px;">Waiting for 60m Candle Close & ADX Breakout</div>
@@ -1127,7 +1127,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             active_positions_html = f"""
             <div class="card" style="padding:18px 24px; text-align:center; color:#94a3b8; background:#0a101d; border:1px dashed #1e293b; margin-bottom:24px;">
               <div style="font-size:20px; margin-bottom:4px;">🛡️</div>
-              <div style="font-weight:600; color:#f1f5f9; margin-bottom:4px;">All 3 Concurrency Slots Available</div>
+              <div style="font-weight:600; color:#f1f5f9; margin-bottom:4px;">All 4 Concurrency Slots Available</div>
               <div style="font-size:12px; color:#64748b;">The engine is actively scanning the 8-asset universe (AVAX, LINK, HYPE, DOGE, XMR, BTC, ETH, SOL) on 60m candle closes. When Macro 200-EMA and rising ADX confirm a trend, a single runner position with initial hard SL will arm here automatically.</div>
             </div>"""
 
@@ -1846,14 +1846,13 @@ class TelemetryHandler(BaseHTTPRequestHandler):
     <!-- Strategy Banner & Concurrency Overview -->
     <div class="strategy-banner">
       <div class="strat-info">
-        <span class="strat-badge">OPTION A &bull; PURE SINGLE-LEG TREND RUNNER</span>
-        <span class="strat-sub">8-Asset Champion Universe &bull; Macro 200-EMA + Rising ADX &bull; True Breakeven &bull; Progressive Ratchets</span>
+        <span class="strat-sub" style="font-weight:600; color:#cbd5e1; font-size:12.5px;">8-Asset Champion Universe &bull; Macro 200-EMA + Rising ADX &bull; True Breakeven &bull; Progressive Ratchets</span>
       </div>
       <div class="strat-limits">
         <span class="limit-pill">Base Capital: <b>$1,000 USDT</b></span>
         <span class="limit-pill">Leverage: <b>4x</b></span>
-        <span class="limit-pill">Max Concurrent: <b>3 Trades</b></span>
-        <span class="limit-pill safe">Reserve Buffer: <b>$250 (25%)</b></span>
+        <span class="limit-pill">Max Concurrent: <b>4 Trades</b></span>
+        <span class="limit-pill safe">Alloc: <b>4 &times; $250 Margin</b></span>
       </div>
     </div>
 

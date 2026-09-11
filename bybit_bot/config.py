@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-# -- Champion defaults per market (Option A: Pure Single-Leg Trend Runner) ---
+# -- Champion defaults per market (Single-Leg Trend Runner) ---
 DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
     "BTCUSDT": {
         "candle_interval": "60",
@@ -461,7 +461,7 @@ class Config:
     symbols: List[SymbolConfig] = field(default_factory=list)
     testnet: bool = True
     leverage: int = 10
-    max_concurrent_pairs: int = 3
+    max_concurrent_pairs: int = 4
 
     # -- Cycle & Execution management -----------------------------------------
     poll_interval: int = 15             # seconds between indicator checks
@@ -578,8 +578,8 @@ class Config:
         # Global risk & sizing
         parser.add_argument("--leverage", type=int, default=int(os.getenv("LEVERAGE", "4")), help="Leverage (default: 4)")
         parser.add_argument("--max-concurrent-pairs", type=int,
-                            default=int(os.getenv("MAX_CONCURRENT_PAIRS", "3")),
-                            help="Max pairs trading simultaneously (default: 3)")
+                            default=int(os.getenv("MAX_CONCURRENT_PAIRS", "4")),
+                            help="Max pairs trading simultaneously (default: 4)")
 
         # Optional universal overrides (if specified, applies to all symbols)
         parser.add_argument("--size", type=str, default=None, help="Override size per leg")

@@ -5,7 +5,7 @@
 
 ## 1. Executive Summary & Core Philosophy
 
-The **Single-Leg Trend Runner & Zero-Loss Ratchet System** (Option A) is an institutional-grade, directional trend-following engine designed for **Bybit Linear Perpetual contracts** on the Unified Trading Account (UTA) V5 API.
+The **Single-Leg Trend Runner & Zero-Loss Ratchet System** is an institutional-grade, directional trend-following engine designed for **Bybit Linear Perpetual contracts** on the Unified Trading Account (UTA) V5 API.
 
 While dual-leg hedging was originally conceived to survive unfiltered sideways chop by keeping simultaneous Long and Short positions, our forensic quantitative audit across **8.6 continuous months (8,000 60m candles / 1-minute sub-candle intra-bar path replay with 100% realistic Bybit VIP0 taker fees)** revealed a decisive mathematical breakthrough:
 
@@ -14,7 +14,7 @@ While dual-leg hedging was originally conceived to survive unfiltered sideways c
 > 1. **High-Edge Filter**: By requiring **Macro 200-EMA Alignment** combined with **Rising ADX Momentum ($\ge 20$ with $\text{ADX}_t > \text{ADX}_{t-1}$)**, sideways 9/21 crossover noise is eliminated before entry. The win rate surges to **$80.3\%$** across the top crypto universe.
 > 2. **Elimination of Counter-Leg Debt**: In a dual hedge, collapsing the 30% counter leg every time Branch 1 triggers costs $-0.12D$ in loss plus double taker fees ($-\$1,340$ friction over 8.6 months). Pure Single-Leg entry eliminates this drag completely.
 > 3. **The Zero-Loss Buffer**: Entering at $P_0$ and waiting for $+0.35D$ to $+0.40D$ of trend confirmation provides an organic profit cushion. At that moment, the Stop-Loss is raised to **True Breakeven ($P_0 + 2\times\text{fee} + \text{safety buffer}$)**, rendering all subsequent pullbacks **$100\%$ risk-free ($\$0$ loss)**.
-> 4. **Multi-Asset Concurrency with Fixed Capital**: Operating with strictly **$\$1,000$ USDT capital** at **$4\times$ leverage** ($\$4,000$ total buying power), the system scans an **8-Asset Champion Universe** and allocates trades to a **Concurrency Manager (Max $N=3$ concurrent trades)**. This leaves a guaranteed **$\$250$ cash margin reserve buffer ($25\%$ liquidity cushion)**, capturing **$97.1\%$ of all trade signals** and generating **$+\$1,367.31 (+136.7\%$ fixed return) / $+\$2,777.79 (+277.8\%$ compounding)** with only a **$6.31\%$ max account drawdown**.
+> 4. **Multi-Asset Concurrency with Fixed Capital**: Operating with strictly **$\$1,000$ USDT capital** at **$4\times$ leverage** ($\$4,000$ total buying power), the system scans an **8-Asset Champion Universe** and allocates trades to a **Concurrency Manager (Max $N=4$ concurrent trades at $\$250$ margin each)**. This enables **$100\%$ capital deployment**, capturing **$99.2\%$ of all trade signals** (830 out of 837 signals) and generating **$+\$1,524.93 (+152.5\%$ fixed return) / $+\$3,239.60 (+324.0\%$ compounding)** with only a **$6.31\%$ max account drawdown** and **$3.53$ Sharpe ratio**.
 
 ---
 
@@ -88,8 +88,8 @@ When scanning 8 pairs simultaneously, multiple signals fire at overlapping times
 | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
 | **$N = 1$** (Single Slot) | 363 | 474 | 43.4% | +$645.71 (+64.6%) | +$985.40 (+98.5%) | 4.8% | 2.65 | $250 Margin In Use / $750 Cash Buffer |
 | **$N = 2$** (Dual Slot) | 647 | 190 | 77.3% | +$1,123.40 (+112.3%) | +$1,980.12 (+198.0%) | 5.5% | 3.08 | $500 Margin In Use / $500 Cash Buffer |
-| **$N = 3$** (Institutional Safe) | **813** | **24** | **97.1%** | **+$1,367.31 (+136.7%)** | **+$2,777.79 (+277.8%)** | **6.31%** | **3.32** | **$750 Margin In Use / $250 Cash Buffer** |
-| **$N = 4$** (Max Capacity) | **830** | **7** | **99.2%** | **+$1,524.93 (+152.5%)** | **+$3,239.60 (+324.0%)** | **6.31%** | **3.53** | **$1,000 Margin In Use / $0 Cash Buffer** |
+| **$N = 3$** (Conservative Buffer) | **813** | **24** | **97.1%** | **+$1,367.31 (+136.7%)** | **+$2,777.79 (+277.8%)** | **6.31%** | **3.32** | **$750 Margin In Use / $250 Cash Buffer** |
+| **$N = 4$** (Active Production) | **830** | **7** | **99.2%** | **+$1,524.93 (+152.5%)** | **+$3,239.60 (+324.0%)** | **6.31%** | **3.53** | **$1,000 Margin In Use (4x $250) / 100% Capitalized** |
 | **$N = 5$** (Overcapacity) | 834 | 3 | 99.6% | +$1,568.10 (+156.8%) | +$3,410.20 (+341.0%) | 7.9% | 3.48 | Requires 5x leverage or position dilution |
 | **$N = 6$** (Overcapacity) | 836 | 1 | 99.9% | +$1,577.40 (+157.7%) | +$3,490.50 (+349.1%) | 8.8% | 3.42 | Requires 6x leverage or position dilution |
 | **$N = 8$** (Unconstrained) | 837 | 0 | 100.0% | +$1,580.03 (+158.0%) | +$3,520.10 (+352.0%) | 9.4% | 3.39 | Requires 8x leverage or position dilution |
@@ -204,7 +204,7 @@ A critical requirement in multi-pair algorithmic trading is joint market risk ma
                                         v
 +-------------------------------------------------------------------------------+
 |                             CONCURRENCY MANAGER CHECK                         |
-|  - Is Active Trades Count < max_concurrent_pairs (3)?                          |
+|  - Is Active Trades Count < max_concurrent_pairs (4)?                          |
 |    * YES: Slot available. Proceed immediately to Entry.                       |
 |    * NO: Pair enters WAITING queue until an existing trade realizes.          |
 +---------------------------------------+---------------------------------------+

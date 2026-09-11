@@ -23,8 +23,8 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "use_dynamic_atr": True,
         "atr_mult": Decimal("0.85"),
         "exhaustion_mult": Decimal("1.50"),
-        "confirm_mult": Decimal("0.35"),
-        "b1_confirm": Decimal("0.35"),    # Move to BE at +0.35D
+        "confirm_mult": Decimal("0.60"),
+        "b1_confirm": Decimal("0.60"),    # Move to BE at +0.60D (gives ~0.40D cushion)
         "b2_confirm": Decimal("1.20"),    # Initial SL barrier at -1.20D
         "b2_upsize": False,               # Pure Single-Leg (No upsize)
         "sl_pct": Decimal("0.34"),
@@ -32,8 +32,8 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "b1_tp_mult": Decimal("3.50"),    # Apex TP at +3.50D
         "b1_r1_trig": Decimal("1.00"),    # Stage 1 Ratchet trigger (+1.00D)
         "b1_r1_sl": Decimal("0.60"),      # Stage 1 SL raised to (+0.60D)
-        "b1_r2_trig": Decimal("1.30"),    # Stage 2 Ratchet trigger (+1.30D)
-        "b1_r2_sl": Decimal("0.90"),      # Stage 2 SL raised to (+0.90D)
+        "b1_r2_trig": Decimal("1.50"),    # Stage 2 Ratchet trigger (+1.50D)
+        "b1_r2_sl": Decimal("1.10"),      # Stage 2 SL raised to (+1.10D)
         "b2_tp_mult": Decimal("2.00"),
         "b2_be_cushion": Decimal("0.10"),
         "b2_r2_trig": Decimal("2.50"),
@@ -41,6 +41,8 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "ratchet_step_pct": Decimal("0.25"),
         "be_lock": True,
         "be_buffer_pct": Decimal("0.34"),
+        "extension_guard_mult": Decimal("2.50"),
+        "pullback_ratio": Decimal("0.38"),
         "size": Decimal("0.01"),          # ~$1,000 notional (for $1,000 capital, 4x leverage, max 3 slots)
         "asymmetric": True,
         "hedge_ratio": Decimal("0.0"),    # PURE SINGLE-LEG (NO COUNTER)
@@ -59,17 +61,17 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "use_dynamic_atr": True,
         "atr_mult": Decimal("0.85"),
         "exhaustion_mult": Decimal("1.50"),
-        "confirm_mult": Decimal("0.40"),
-        "b1_confirm": Decimal("0.40"),    # Move to BE at +0.40D
+        "confirm_mult": Decimal("0.60"),
+        "b1_confirm": Decimal("0.60"),    # Move to BE at +0.60D (gives ~0.40D cushion)
         "b2_confirm": Decimal("1.00"),    # Initial SL barrier at -1.00D
         "b2_upsize": False,
         "sl_pct": Decimal("0.38"),
         "tp_pct": Decimal("2.56"),
-        "b1_tp_mult": Decimal("3.20"),    # Apex TP at +3.20D
-        "b1_r1_trig": Decimal("0.80"),    # Stage 1 Ratchet trigger (+0.80D)
-        "b1_r1_sl": Decimal("0.40"),      # Stage 1 SL raised to (+0.40D)
-        "b1_r2_trig": Decimal("1.40"),    # Stage 2 Ratchet trigger (+1.40D)
-        "b1_r2_sl": Decimal("1.00"),      # Stage 2 SL raised to (+1.00D)
+        "b1_tp_mult": Decimal("3.50"),    # Apex TP at +3.50D
+        "b1_r1_trig": Decimal("1.00"),    # Stage 1 Ratchet trigger (+1.00D)
+        "b1_r1_sl": Decimal("0.60"),      # Stage 1 SL raised to (+0.60D)
+        "b1_r2_trig": Decimal("1.50"),    # Stage 2 Ratchet trigger (+1.50D)
+        "b1_r2_sl": Decimal("1.10"),      # Stage 2 SL raised to (+1.10D)
         "b2_tp_mult": Decimal("2.00"),
         "b2_be_cushion": Decimal("0.10"),
         "b2_r2_trig": Decimal("2.50"),
@@ -77,6 +79,8 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "ratchet_step_pct": Decimal("0.25"),
         "be_lock": True,
         "be_buffer_pct": Decimal("0.38"),
+        "extension_guard_mult": Decimal("2.50"),
+        "pullback_ratio": Decimal("0.38"),
         "size": Decimal("0.35"),          # ~$1,000 notional (for $1,000 capital, 4x leverage, max 3 slots)
         "asymmetric": True,
         "hedge_ratio": Decimal("0.0"),    # PURE SINGLE-LEG (NO COUNTER)
@@ -95,17 +99,17 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "use_dynamic_atr": True,
         "atr_mult": Decimal("0.85"),
         "exhaustion_mult": Decimal("1.50"),
-        "confirm_mult": Decimal("0.40"),
-        "b1_confirm": Decimal("0.40"),    # Move to BE at +0.40D
+        "confirm_mult": Decimal("0.60"),
+        "b1_confirm": Decimal("0.60"),    # Move to BE at +0.60D (gives ~0.40D cushion)
         "b2_confirm": Decimal("1.00"),    # Initial SL barrier at -1.00D
         "b2_upsize": False,
         "sl_pct": Decimal("0.38"),
         "tp_pct": Decimal("2.56"),
-        "b1_tp_mult": Decimal("3.20"),    # Apex TP at +3.20D
+        "b1_tp_mult": Decimal("3.50"),    # Apex TP at +3.50D
         "b1_r1_trig": Decimal("1.00"),    # Stage 1 Ratchet trigger (+1.00D)
         "b1_r1_sl": Decimal("0.60"),      # Stage 1 SL raised to (+0.60D)
-        "b1_r2_trig": Decimal("1.60"),    # Stage 2 Ratchet trigger (+1.60D)
-        "b1_r2_sl": Decimal("1.20"),      # Stage 2 SL raised to (+1.20D)
+        "b1_r2_trig": Decimal("1.50"),    # Stage 2 Ratchet trigger (+1.50D)
+        "b1_r2_sl": Decimal("1.10"),      # Stage 2 SL raised to (+1.10D)
         "b2_tp_mult": Decimal("2.00"),
         "b2_be_cushion": Decimal("0.10"),
         "b2_r2_trig": Decimal("2.50"),
@@ -113,6 +117,8 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "ratchet_step_pct": Decimal("0.25"),
         "be_lock": True,
         "be_buffer_pct": Decimal("0.38"),
+        "extension_guard_mult": Decimal("2.50"),
+        "pullback_ratio": Decimal("0.38"),
         "size": Decimal("6.0"),           # ~$1,000 notional (for $1,000 capital, 4x leverage, max 3 slots)
         "asymmetric": True,
         "hedge_ratio": Decimal("0.0"),    # PURE SINGLE-LEG (NO COUNTER)
@@ -130,7 +136,8 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "d_pct": Decimal("0.80"),
         "use_dynamic_atr": True,
         "atr_mult": Decimal("0.85"),
-        "b1_confirm": Decimal("0.35"),
+        "confirm_mult": Decimal("0.60"),
+        "b1_confirm": Decimal("0.60"),
         "b2_confirm": Decimal("1.20"),
         "b2_upsize": False,
         "sl_pct": Decimal("0.38"),
@@ -140,6 +147,8 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "b1_r1_sl": Decimal("0.60"),
         "b1_r2_trig": Decimal("1.50"),
         "b1_r2_sl": Decimal("1.10"),
+        "extension_guard_mult": Decimal("2.50"),
+        "pullback_ratio": Decimal("0.38"),
         "size": Decimal("35.0"),          # ~$1,000 notional
         "asymmetric": True,
         "hedge_ratio": Decimal("0.0"),
@@ -157,16 +166,19 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "d_pct": Decimal("0.80"),
         "use_dynamic_atr": True,
         "atr_mult": Decimal("0.85"),
-        "b1_confirm": Decimal("0.35"),
+        "confirm_mult": Decimal("0.60"),
+        "b1_confirm": Decimal("0.60"),
         "b2_confirm": Decimal("1.50"),
         "b2_upsize": False,
         "sl_pct": Decimal("0.38"),
         "tp_pct": Decimal("2.80"),
         "b1_tp_mult": Decimal("3.50"),
-        "b1_r1_trig": Decimal("0.80"),
-        "b1_r1_sl": Decimal("0.40"),
+        "b1_r1_trig": Decimal("1.00"),
+        "b1_r1_sl": Decimal("0.60"),
         "b1_r2_trig": Decimal("1.50"),
         "b1_r2_sl": Decimal("1.10"),
+        "extension_guard_mult": Decimal("2.50"),
+        "pullback_ratio": Decimal("0.38"),
         "size": Decimal("70.0"),          # ~$1,000 notional
         "asymmetric": True,
         "hedge_ratio": Decimal("0.0"),
@@ -184,7 +196,8 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "d_pct": Decimal("0.80"),
         "use_dynamic_atr": True,
         "atr_mult": Decimal("0.85"),
-        "b1_confirm": Decimal("0.35"),
+        "confirm_mult": Decimal("0.60"),
+        "b1_confirm": Decimal("0.60"),
         "b2_confirm": Decimal("1.00"),
         "b2_upsize": False,
         "sl_pct": Decimal("0.38"),
@@ -194,6 +207,8 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "b1_r1_sl": Decimal("0.60"),
         "b1_r2_trig": Decimal("1.50"),
         "b1_r2_sl": Decimal("1.10"),
+        "extension_guard_mult": Decimal("2.50"),
+        "pullback_ratio": Decimal("0.38"),
         "size": Decimal("35.0"),          # ~$1,000 notional
         "asymmetric": True,
         "hedge_ratio": Decimal("0.0"),
@@ -211,16 +226,19 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "d_pct": Decimal("0.80"),
         "use_dynamic_atr": True,
         "atr_mult": Decimal("0.85"),
-        "b1_confirm": Decimal("0.35"),
+        "confirm_mult": Decimal("0.60"),
+        "b1_confirm": Decimal("0.60"),
         "b2_confirm": Decimal("1.50"),
         "b2_upsize": False,
         "sl_pct": Decimal("0.38"),
         "tp_pct": Decimal("2.40"),
         "b1_tp_mult": Decimal("3.00"),
-        "b1_r1_trig": Decimal("0.80"),
-        "b1_r1_sl": Decimal("0.40"),
+        "b1_r1_trig": Decimal("1.00"),
+        "b1_r1_sl": Decimal("0.60"),
         "b1_r2_trig": Decimal("1.50"),
         "b1_r2_sl": Decimal("1.10"),
+        "extension_guard_mult": Decimal("2.50"),
+        "pullback_ratio": Decimal("0.38"),
         "size": Decimal("6.0"),           # ~$1,000 notional
         "asymmetric": True,
         "hedge_ratio": Decimal("0.0"),
@@ -238,16 +256,19 @@ DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
         "d_pct": Decimal("0.80"),
         "use_dynamic_atr": True,
         "atr_mult": Decimal("0.85"),
-        "b1_confirm": Decimal("0.50"),
+        "confirm_mult": Decimal("0.60"),
+        "b1_confirm": Decimal("0.60"),
         "b2_confirm": Decimal("1.50"),
         "b2_upsize": False,
         "sl_pct": Decimal("0.38"),
         "tp_pct": Decimal("2.80"),
         "b1_tp_mult": Decimal("3.50"),
-        "b1_r1_trig": Decimal("0.80"),
-        "b1_r1_sl": Decimal("0.40"),
-        "b1_r2_trig": Decimal("1.60"),
-        "b1_r2_sl": Decimal("1.20"),
+        "b1_r1_trig": Decimal("1.00"),
+        "b1_r1_sl": Decimal("0.60"),
+        "b1_r2_trig": Decimal("1.50"),
+        "b1_r2_sl": Decimal("1.10"),
+        "extension_guard_mult": Decimal("2.50"),
+        "pullback_ratio": Decimal("0.38"),
         "size": Decimal("7500.0"),        # ~$1,000 notional
         "asymmetric": True,
         "hedge_ratio": Decimal("0.0"),
@@ -322,13 +343,15 @@ class SymbolConfig:
     macro_ema_period: int = 200
     use_macro_trend_filter: bool = True
     adx_rising_required: bool = True
-    b1_confirm: Decimal = Decimal("0.40")
+    b1_confirm: Decimal = Decimal("0.60")
     b2_confirm: Decimal = Decimal("1.00")
     b2_upsize: bool = False
     size: Decimal = Decimal("0.001")
     asymmetric: bool = True
     hedge_ratio: Decimal = Decimal("0.0")
     timeout_bars: int = 50
+    extension_guard_mult: Decimal = Decimal("2.50")
+    pullback_ratio: Decimal = Decimal("0.38")
 
     @classmethod
     def from_profile_or_defaults(cls, symbol: str, overrides: Optional[Dict[str, Any]] = None) -> "SymbolConfig":

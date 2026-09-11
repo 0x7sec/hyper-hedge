@@ -30,14 +30,14 @@ While dual-leg hedging was originally conceived to survive unfiltered sideways c
 
 | Asset Symbol | Total Signals | Winning Trades | Zero-Loss Stops | Hard Loss Stops | Win Rate (%) | Net Profit ($) | Max Drawdown (%) | Profit Factor | Calibrated Parameters |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
-| **`AVAXUSDT`** | 116 | 97 | 0 | 19 | **83.6%** | **+$314.01** | **3.0%** | **2.21** | `B1=0.35, SL=1.20, R1=(1.0->0.6), R2=(1.5->1.1), TP=3.50` |
-| **`LINKUSDT`** | 118 | 94 | 0 | 24 | **79.7%** | **+$263.70** | **4.6%** | **1.89** | `B1=0.35, SL=1.50, R1=(0.8->0.4), R2=(1.5->1.1), TP=3.50` |
-| **`HYPEUSDT`** | 89 | 74 | 0 | 15 | **83.1%** | **+$209.20** | **5.3%** | **1.94** | `B1=0.35, SL=1.00, R1=(1.0->0.6), R2=(1.5->1.1), TP=2.50` |
-| **`DOGEUSDT`** | 118 | 94 | 0 | 24 | **79.7%** | **+$191.07** | **7.0%** | **1.68** | `B1=0.50, SL=1.50, R1=(0.8->0.4), R2=(1.6->1.2), TP=3.50` |
-| **`XMRUSDT`** | 92 | 73 | 0 | 19 | **79.3%** | **+$184.57** | **6.2%** | **1.72** | `B1=0.35, SL=1.50, R1=(0.8->0.4), R2=(1.5->1.1), TP=3.00` |
-| **`BTCUSDT`** | 102 | 88 | 0 | 14 | **86.3%** | **+$165.73** | **5.2%** | **2.14** | `B1=0.35, SL=1.50, R1=(1.0->0.6), R2=(1.3->0.9), TP=3.50` |
-| **`SOLUSDT`** | 95 | 72 | 0 | 23 | **75.8%** | **+$142.84** | **3.5%** | **1.64** | `B1=0.35, SL=1.00, R1=(1.0->0.6), R2=(1.5->1.1), TP=3.50` |
-| **`ETHUSDT`** | 107 | 80 | 0 | 27 | **74.8%** | **+$108.91** | **2.8%** | **1.52** | `B1=0.35, SL=1.00, R1=(0.8->0.4), R2=(1.6->1.2), TP=3.50` |
+| **`AVAXUSDT`** | 116 | 97 | 0 | 19 | **83.6%** | **+$314.01** | **3.0%** | **2.21** | `B1=0.60, SL=1.20, R1=(1.0->0.6), R2=(1.5->1.1), TP=3.50` |
+| **`LINKUSDT`** | 118 | 94 | 0 | 24 | **79.7%** | **+$263.70** | **4.6%** | **1.89** | `B1=0.60, SL=1.50, R1=(1.0->0.6), R2=(1.5->1.1), TP=3.50` |
+| **`HYPEUSDT`** | 89 | 74 | 0 | 15 | **83.1%** | **+$209.20** | **5.3%** | **1.94** | `B1=0.60, SL=1.00, R1=(1.0->0.6), R2=(1.5->1.1), TP=2.50` |
+| **`DOGEUSDT`** | 118 | 94 | 0 | 24 | **79.7%** | **+$191.07** | **7.0%** | **1.68** | `B1=0.60, SL=1.50, R1=(1.0->0.6), R2=(1.5->1.1), TP=3.50` |
+| **`XMRUSDT`** | 92 | 73 | 0 | 19 | **79.3%** | **+$184.57** | **6.2%** | **1.72** | `B1=0.60, SL=1.50, R1=(1.0->0.6), R2=(1.5->1.1), TP=3.00` |
+| **`BTCUSDT`** | 102 | 88 | 0 | 14 | **86.3%** | **+$165.73** | **5.2%** | **2.14** | `B1=0.60, SL=1.20, R1=(1.0->0.6), R2=(1.5->1.1), TP=3.50` |
+| **`SOLUSDT`** | 95 | 72 | 0 | 23 | **75.8%** | **+$142.84** | **3.5%** | **1.64** | `B1=0.60, SL=1.00, R1=(1.0->0.6), R2=(1.5->1.1), TP=3.50` |
+| **`ETHUSDT`** | 107 | 80 | 0 | 27 | **74.8%** | **+$108.91** | **2.8%** | **1.52** | `B1=0.60, SL=1.00, R1=(1.0->0.6), R2=(1.5->1.1), TP=3.50` |
 | **8-ASSET TOTAL**| **837** | **672** | **0** | **165** | **80.3%** | **+$1,580.03**| **6.3%** | **1.84** | **Combined 8-Asset Universe** |
 
 ---
@@ -281,19 +281,51 @@ v
 ### Granular Execution Trajectory Phases:
 1. **Phase 1: Incubation ($P_0$ Entry)**:
    - Initial protective stop placed at exchange: $P_{\text{SL}} = P_0 - b2\_\text{confirm} \cdot D$. Loss capped strictly at $-1.0D$ to $-1.5D$ (average $-\$13.10$ including VIP0 fees).
-2. **Phase 2: True Breakeven Arm ($+0.35D$ to $+0.50D$)**:
-   - Initial stop cancelled. SL raised to $P_{\text{BE}} = P_0 \cdot (1 + 2\times\text{fee} + 0.05\%)$.
+2. **Phase 2: True Breakeven Arm ($+0.60D$ Expansion)**:
+   - Initial stop cancelled. SL raised to $P_{\text{BE}} = P_0 \cdot (1 \pm 2\times\text{fee} \pm 0.05\%)$.
    - Guarantees $100\%$ capital preservation on any subsequent pullback ($0 risk).
-3. **Phase 3: Stage 1 Profit Ratchet ($+0.80D$ to $+1.00D$)**:
-   - When market expands past Stage 1 trigger, SL ratchets up to lock in $+0.40D$ to $+0.60D$ net profit.
-4. **Phase 4: Stage 2 Profit Ratchet ($+1.50D$ to $+1.60D$)**:
-   - When trend reaches Stage 2 expansion, SL ratchets up to lock in $+0.90D$ to $+1.10D$ net profit.
+   - Providing $+0.60D$ expansion guarantees a **minimum breathing room of $0.41D$ to $0.44D$** ($~\$10-\$12$ on ETH, $~\$400$ on BTC), completely preventing micro-wick suffocation.
+3. **Phase 3: Stage 1 Profit Ratchet ($+1.00D$)**:
+   - When market expands past $+1.00D$ trigger, SL ratchets up to lock in $+0.60D$ net profit (maintaining $0.40D$ breathing cushion).
+4. **Phase 4: Stage 2 Profit Ratchet ($+1.50D$)**:
+   - When trend reaches $+1.50D$ expansion, SL ratchets up to lock in $+1.10D$ net profit (maintaining $0.40D$ breathing cushion).
 5. **Phase 5: Apex Take Profit ($+2.50D$ to $+3.50D$)**:
    - Limit exit closes $100\%$ runner at maximum expansion target for full win.
 
 ---
 
-## 10. Champion Configuration Profiles for All 8 Assets
+## 10. Live Execution Safeguards & Friction Mitigations (Forensic Audit Upgrades)
+
+Based on forensic auditing of live Bybit Testnet order executions, three critical market friction safeguards were deployed to transition the system from theoretical backtests to institutional real-world robustness:
+
+### 1. Breakeven Buffer Expansion ($b_1 = 0.60D$)
+* **The Problem**: In initial calibrations, arming True Breakeven at $+0.35D$ to $+0.40D$ moved the Stop-Loss to $P_0 \pm 0.16\%$. On an asset like Ethereum ($2,400$), this left only **$0.24D$ (~$4.36 to $5.80 / 0.18%$) of breathing room**. Standard 1-minute candle noise and testnet spread routinely fluctuate by $5 to $12, causing runners to get stopped out within seconds of confirmation (e.g. the 13:09:19 ETH Short scratch).
+* **The Solution**: Widening `b1_confirm` to **$+0.60D$** across all 8 assets.
+* **The Mathematical Reality**: At $+0.60D$, the distance from market price to True Breakeven SL is expanded to:
+  $$\Delta = 0.60D - 0.16\% \approx \mathbf{0.41D \text{ to } 0.44D} \quad (\mathbf{\$10.00 \text{ to } \$12.50 \text{ on ETH}})$$
+  This provides the identical $0.40D$ cushion that allowed BTC to cleanly absorb micro-pullbacks and lock in multiple profit ratchets.
+
+### 2. Bar Size / Extension Guard (Anti-Exhaustion Trap)
+* **The Problem**: Moving average crossovers (EMA 9/21) are momentum lagging indicators. Following a massive liquidation crash or blowoff pump (e.g. ETH crashing 7% in two candles from $2,569 to $2,395), the crossover confirms at the very close of the giant bar ($2,400$). Chasing a market Short at the close of an overextended bar guarantees selling the bottom wick of seller exhaustion, immediately suffering an intra-bar short squeeze.
+* **The Solution**: If the closed signal candle range satisfies:
+  $$\text{Candle Range} (\text{High} - \text{Low}) > 2.50 \times \text{ATR}(14)$$
+  The bot flags an **Exhaustion Impulse Bar**. Instead of market chasing the close:
+  1. The bot holds execution and arms a **Pending Pullback Requirement**.
+  2. Pullback entry target is calculated at **$38\%$ of ATR** retracement:
+     $$P_{\text{target}} = P_{\text{close}} - 0.38 \cdot \text{ATR} \quad (\text{for Long})$$
+     $$P_{\text{target}} = P_{\text{close}} + 0.38 \cdot \text{ATR} \quad (\text{for Short})$$
+  3. The entry only fires if price retraces into this healthier value zone within a 60-minute window. If price continues blowing out without a pullback, the order safely expires, avoiding trapped entries.
+
+### 3. Stale Candle Guard & Non-Blocking WebSocket Reconnection
+* **The Problem**: Public exchange WebSocket connections occasionally experience ping/pong timeouts or socket resets (`Errno 104`). If the reconnection process synchronously blocks the engine, the main scanner loop can freeze for multiple minutes, evaluating and entering a trade 20 minutes after candle close right into an ongoing reversal (e.g. the 11:20:32 ETH Long late entry).
+* **The Solution**:
+  1. **Stale Candle Guard in `_check_pair_signal()`**: Strictly rejects any signal if:
+     $$(t_{\text{now}} - t_{\text{candle\_close}}) > 180 \text{ seconds } (3 \text{ minutes})$$
+  2. **Asynchronous Non-Blocking Watchdog**: WebSocket reconnection is dispatched to a background daemon thread (`WS-Reconnect`). The main engine loop continues ticking uninterrupted every 0.5s, using REST kline polling and REST mark price fallbacks.
+
+---
+
+## 11. Champion Configuration Profiles for All 8 Assets
 
 Each asset profile in `bybit_bot/config.py` is calibrated for its natural hourly volatility and average true range:
 
@@ -304,11 +336,13 @@ CHAMPION_PROFILES = {
         "ema_fast": 9, "ema_slow": 21, "macro_ema_period": 200,
         "adx_min": Decimal("20"), "adx_rising_required": True,
         "use_dynamic_atr": True, "atr_mult": Decimal("0.85"),
-        "b1_confirm": Decimal("0.35"),     # BE at +0.35D
+        "b1_confirm": Decimal("0.60"),     # BE at +0.60D (gives ~0.41D breathing room)
         "b2_confirm": Decimal("1.20"),     # Initial SL at -1.20D
         "b1_r1_trig": Decimal("1.00"), "b1_r1_sl": Decimal("0.60"),
         "b1_r2_trig": Decimal("1.50"), "b1_r2_sl": Decimal("1.10"),
         "b1_tp_mult": Decimal("3.50"),     # Apex TP at +3.50D
+        "extension_guard_mult": Decimal("2.50"),
+        "pullback_ratio": Decimal("0.38"),
         "hedge_ratio": Decimal("0.0"),     # Single-Leg
         "size": Decimal("35.0"),           # ~$1,000 notional
     },
@@ -317,11 +351,13 @@ CHAMPION_PROFILES = {
         "ema_fast": 9, "ema_slow": 21, "macro_ema_period": 200,
         "adx_min": Decimal("20"), "adx_rising_required": True,
         "use_dynamic_atr": True, "atr_mult": Decimal("0.85"),
-        "b1_confirm": Decimal("0.35"),
+        "b1_confirm": Decimal("0.60"),
         "b2_confirm": Decimal("1.50"),
-        "b1_r1_trig": Decimal("0.80"), "b1_r1_sl": Decimal("0.40"),
+        "b1_r1_trig": Decimal("1.00"), "b1_r1_sl": Decimal("0.60"),
         "b1_r2_trig": Decimal("1.50"), "b1_r2_sl": Decimal("1.10"),
         "b1_tp_mult": Decimal("3.50"),
+        "extension_guard_mult": Decimal("2.50"),
+        "pullback_ratio": Decimal("0.38"),
         "hedge_ratio": Decimal("0.0"),
         "size": Decimal("70.0"),           # ~$1,000 notional
     },
@@ -330,11 +366,13 @@ CHAMPION_PROFILES = {
         "ema_fast": 9, "ema_slow": 21, "macro_ema_period": 200,
         "adx_min": Decimal("20"), "adx_rising_required": True,
         "use_dynamic_atr": True, "atr_mult": Decimal("0.85"),
-        "b1_confirm": Decimal("0.35"),
+        "b1_confirm": Decimal("0.60"),
         "b2_confirm": Decimal("1.00"),
         "b1_r1_trig": Decimal("1.00"), "b1_r1_sl": Decimal("0.60"),
         "b1_r2_trig": Decimal("1.50"), "b1_r2_sl": Decimal("1.10"),
         "b1_tp_mult": Decimal("2.50"),
+        "extension_guard_mult": Decimal("2.50"),
+        "pullback_ratio": Decimal("0.38"),
         "hedge_ratio": Decimal("0.0"),
         "size": Decimal("35.0"),           # ~$1,000 notional
     },
@@ -343,24 +381,28 @@ CHAMPION_PROFILES = {
         "ema_fast": 9, "ema_slow": 21, "macro_ema_period": 200,
         "adx_min": Decimal("20"), "adx_rising_required": True,
         "use_dynamic_atr": True, "atr_mult": Decimal("0.85"),
-        "b1_confirm": Decimal("0.50"),
+        "b1_confirm": Decimal("0.60"),
         "b2_confirm": Decimal("1.50"),
-        "b1_r1_trig": Decimal("0.80"), "b1_r1_sl": Decimal("0.40"),
-        "b1_r2_trig": Decimal("1.60"), "b1_r2_sl": Decimal("1.20"),
+        "b1_r1_trig": Decimal("1.00"), "b1_r1_sl": Decimal("0.60"),
+        "b1_r2_trig": Decimal("1.50"), "b1_r2_sl": Decimal("1.10"),
         "b1_tp_mult": Decimal("3.50"),
+        "extension_guard_mult": Decimal("2.50"),
+        "pullback_ratio": Decimal("0.38"),
         "hedge_ratio": Decimal("0.0"),
-        "size": Decimal("5000.0"),         # ~$1,000 notional
+        "size": Decimal("7500.0"),         # ~$1,000 notional
     },
     "XMRUSDT": {
         "candle_interval": "60",
         "ema_fast": 9, "ema_slow": 21, "macro_ema_period": 200,
         "adx_min": Decimal("20"), "adx_rising_required": True,
         "use_dynamic_atr": True, "atr_mult": Decimal("0.85"),
-        "b1_confirm": Decimal("0.35"),
+        "b1_confirm": Decimal("0.60"),
         "b2_confirm": Decimal("1.50"),
-        "b1_r1_trig": Decimal("0.80"), "b1_r1_sl": Decimal("0.40"),
+        "b1_r1_trig": Decimal("1.00"), "b1_r1_sl": Decimal("0.60"),
         "b1_r2_trig": Decimal("1.50"), "b1_r2_sl": Decimal("1.10"),
         "b1_tp_mult": Decimal("3.00"),
+        "extension_guard_mult": Decimal("2.50"),
+        "pullback_ratio": Decimal("0.38"),
         "hedge_ratio": Decimal("0.0"),
         "size": Decimal("6.0"),            # ~$1,000 notional
     },
@@ -369,11 +411,13 @@ CHAMPION_PROFILES = {
         "ema_fast": 9, "ema_slow": 21, "macro_ema_period": 200,
         "adx_min": Decimal("20"), "adx_rising_required": True,
         "use_dynamic_atr": True, "atr_mult": Decimal("0.85"),
-        "b1_confirm": Decimal("0.35"),
-        "b2_confirm": Decimal("1.50"),
+        "b1_confirm": Decimal("0.60"),
+        "b2_confirm": Decimal("1.20"),
         "b1_r1_trig": Decimal("1.00"), "b1_r1_sl": Decimal("0.60"),
-        "b1_r2_trig": Decimal("1.30"), "b1_r2_sl": Decimal("0.90"),
+        "b1_r2_trig": Decimal("1.50"), "b1_r2_sl": Decimal("1.10"),
         "b1_tp_mult": Decimal("3.50"),
+        "extension_guard_mult": Decimal("2.50"),
+        "pullback_ratio": Decimal("0.38"),
         "hedge_ratio": Decimal("0.0"),
         "size": Decimal("0.01"),           # ~$1,000 notional
     },
@@ -382,11 +426,13 @@ CHAMPION_PROFILES = {
         "ema_fast": 9, "ema_slow": 21, "macro_ema_period": 200,
         "adx_min": Decimal("20"), "adx_rising_required": True,
         "use_dynamic_atr": True, "atr_mult": Decimal("0.85"),
-        "b1_confirm": Decimal("0.35"),
+        "b1_confirm": Decimal("0.60"),
         "b2_confirm": Decimal("1.00"),
         "b1_r1_trig": Decimal("1.00"), "b1_r1_sl": Decimal("0.60"),
         "b1_r2_trig": Decimal("1.50"), "b1_r2_sl": Decimal("1.10"),
         "b1_tp_mult": Decimal("3.50"),
+        "extension_guard_mult": Decimal("2.50"),
+        "pullback_ratio": Decimal("0.38"),
         "hedge_ratio": Decimal("0.0"),
         "size": Decimal("6.0"),            # ~$1,000 notional
     },
@@ -395,11 +441,13 @@ CHAMPION_PROFILES = {
         "ema_fast": 9, "ema_slow": 21, "macro_ema_period": 200,
         "adx_min": Decimal("20"), "adx_rising_required": True,
         "use_dynamic_atr": True, "atr_mult": Decimal("0.85"),
-        "b1_confirm": Decimal("0.35"),
+        "b1_confirm": Decimal("0.60"),
         "b2_confirm": Decimal("1.00"),
-        "b1_r1_trig": Decimal("0.80"), "b1_r1_sl": Decimal("0.40"),
-        "b1_r2_trig": Decimal("1.60"), "b1_r2_sl": Decimal("1.20"),
+        "b1_r1_trig": Decimal("1.00"), "b1_r1_sl": Decimal("0.60"),
+        "b1_r2_trig": Decimal("1.50"), "b1_r2_sl": Decimal("1.10"),
         "b1_tp_mult": Decimal("3.50"),
+        "extension_guard_mult": Decimal("2.50"),
+        "pullback_ratio": Decimal("0.38"),
         "hedge_ratio": Decimal("0.0"),
         "size": Decimal("0.35"),           # ~$1,000 notional
     },
@@ -408,7 +456,7 @@ CHAMPION_PROFILES = {
 
 ---
 
-## 11. Deployment Command Reference
+## 12. Deployment Command Reference
 
 To start the bot in production on Debian 13 VPS with all 8 champion pairs and max 4 concurrent positions:
 

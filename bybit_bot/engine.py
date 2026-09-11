@@ -65,6 +65,13 @@ class PairState:
     base_be_sl: Decimal = Decimal("0")
     dynamic_d: Optional[Decimal] = None
 
+    # Extension Guard (Exhaustion & Pullback Entry)
+    pending_pullback: bool = False
+    pending_direction: Optional[str] = None
+    pullback_target_px: Optional[Decimal] = None
+    pullback_expiry_ts: float = 0.0
+    pending_candles: Optional[List[Dict[str, Any]]] = None
+
     def is_active(self) -> bool:
         return self.status == "ACTIVE" and (
             (self.long_leg and self.long_leg.status == "ACTIVE") or
@@ -198,8 +205,8 @@ class BybitTradingEngine:
             logger.error(f"Failed to start WebSocket: {e}")
 
     def _check_websocket_health(self) -> None:
-        """Watchdog: if WebSocket has been silent for > 30s or disconnected, cleanly reconnect."""
-        if not self.running:
+        """Watchdog: if WebSocket has been silent for > 30s or disconnected, cleanly reconnect in background."""
+        if not self.running or getattr(self, "_ws_reconnecting", False):
             return
         now = time.time()
         if now - self.last_ws_reconnect_time < 30.0:
@@ -216,10 +223,19 @@ class BybitTradingEngine:
         if not is_conn or silent:
             logger.warning(
                 f"[WS WATCHDOG] WebSocket silent/disconnected (connected={is_conn}, "
-                f"last_msg={int(now - self.last_ws_msg_time)}s ago). Reconnecting..."
+                f"last_msg={int(now - self.last_ws_msg_time)}s ago). Reconnecting in background..."
             )
             self.last_ws_reconnect_time = now
-            self._start_websocket()
+            self._ws_reconnecting = True
+
+            def _async_reconnect():
+                try:
+                    self._start_websocket()
+                finally:
+                    self._ws_reconnecting = False
+
+            t = threading.Thread(target=_async_reconnect, daemon=True, name="WS-Reconnect")
+            t.start()
 
     def _get_fresh_price(self, pair: PairState) -> Decimal:
         """Get live market price: use latest WS tick if < 3s old, else fetch fresh from REST."""
@@ -261,11 +277,74 @@ class BybitTradingEngine:
         pair.latest_price = price
         pair.last_tick_time = now
 
+        # Check pending pullback if waiting
+        if pair.pending_pullback:
+            with self._lock:
+                if pair.pending_pullback:
+                    self._check_pullback_trigger(pair, price)
+
         # Process trailing stop & TP if pair is active (thread-safe)
         if pair.status == "ACTIVE":
             with self._lock:
                 if pair.status == "ACTIVE":
                     self._process_pair_tick(pair, price)
+
+    def _compute_atr(self, sym: str, candles: Optional[List[Dict[str, Any]]] = None) -> Decimal:
+        """Retrieve recent ATR(14) for symbol from candles if available, else REST."""
+        if candles and len(candles) >= 2:
+            atr = candles[-2].get("atr")
+            if atr and atr > Decimal("0"):
+                return Decimal(str(atr))
+        try:
+            pair = self.pairs.get(sym)
+            interval = pair.cfg.candle_interval if pair else "60"
+            k = self.service.get_recent_candles(symbol=sym, interval=interval, limit=35)
+            if len(k) >= 15:
+                compute_indicators(k, fast_periods=[9, 21], adx_period=14)
+                atr = k[-2].get("atr")
+                if atr and atr > Decimal("0"):
+                    return Decimal(str(atr))
+        except Exception as e:
+            logger.debug(f"[{sym}] Error computing ATR: {e}")
+        return Decimal("0")
+
+    def _check_pullback_trigger(self, pair: PairState, price: Decimal) -> bool:
+        """Check if pending pullback entry price has been touched."""
+        if not pair.pending_pullback:
+            return False
+        now = time.time()
+        sym = pair.cfg.symbol
+        if now >= pair.pullback_expiry_ts:
+            logger.info(f"[{sym}] Pullback entry window expired without fill.")
+            pair.pending_pullback = False
+            pair.pending_direction = None
+            pair.pullback_target_px = None
+            pair.status = "SCANNING"
+            pair.status_msg = "Pullback expired -> Scanning"
+            return False
+
+        p_dir = pair.pending_direction
+        target_px = pair.pullback_target_px or Decimal("0")
+        filled = False
+        if p_dir == "bullish" and price <= target_px:
+            filled = True
+        elif p_dir == "bearish" and price >= target_px:
+            filled = True
+
+        if filled:
+            console.print(
+                f"\n[bold green]>>> [{sym}] PULLBACK ENTRY FILLED: {p_dir.upper()} @ {price:.2f} "
+                f"(Target was {target_px:.2f})! Entering trade... <<<[/bold green]"
+            )
+            saved_dir = p_dir
+            saved_candles = pair.pending_candles
+            pair.pending_pullback = False
+            pair.pending_direction = None
+            pair.pullback_target_px = None
+            pair.pending_candles = None
+            self._enter_pair_trade(pair, saved_dir, candles=saved_candles)
+            return True
+        return False
 
     # ==========================================================================
     # CRASH-RESTART RECONCILIATION
@@ -430,6 +509,23 @@ class BybitTradingEngine:
                     report_lines.append(f"  * [bold]{sym:<8}[/bold]: COOLDOWN ({rem}s remaining)")
                 continue
 
+            # Handle pending pullback from Bar Size / Extension Guard
+            if pair.pending_pullback:
+                px = self._get_fresh_price(pair)
+                if self._check_pullback_trigger(pair, px):
+                    active_count += 1
+                    report_lines.append(f"  * [bold green]{sym:<8}[/bold green]: PULLBACK FILLED -> ENTERED {pair.signal_direction.upper()}!")
+                    continue
+                elif pair.pending_pullback:
+                    rem = max(0, int(pair.pullback_expiry_ts - now))
+                    p_dir = pair.pending_direction or "TRADE"
+                    target_px = pair.pullback_target_px or Decimal("0")
+                    pair.status_msg = f"WAITING PULLBACK ({p_dir.upper()} @ {target_px:.2f}, {rem}s rem)"
+                    report_lines.append(
+                        f"  * [bold yellow]{sym:<8}[/bold yellow]: WAITING PULLBACK ({p_dir.upper()} @ {px:.2f} -> {target_px:.2f}, {rem}s rem)"
+                    )
+                    continue
+
             # Active pairs display current legs & PnL
             if pair.status == "ACTIVE":
                 px = self._get_fresh_price(pair)
@@ -542,6 +638,33 @@ class BybitTradingEngine:
                     pair.last_closed_ts = closed_ts
                     direction = self._check_pair_signal(pair, candles)
                     if direction:
+                        # Bar Size / Extension Guard: Check if signal candle range > 2.5 * ATR
+                        candle_range = closed_candle["high"] - closed_candle["low"]
+                        atr = closed_candle.get("atr")
+                        guard_mult = getattr(pair.cfg, "extension_guard_mult", Decimal("2.50"))
+                        is_exhaustion = False
+                        if atr and atr > Decimal("0") and candle_range > (guard_mult * atr):
+                            is_exhaustion = True
+
+                        if is_exhaustion:
+                            # Require a small pullback (38% of ATR) before entering rather than chasing the close
+                            pullback_ratio = getattr(pair.cfg, "pullback_ratio", Decimal("0.38"))
+                            pullback_offset = pullback_ratio * atr
+                            pullback_px = (px - pullback_offset) if direction == "bullish" else (px + pullback_offset)
+                            pair.pending_pullback = True
+                            pair.pending_direction = direction
+                            pair.pullback_target_px = pullback_px
+                            pair.pullback_expiry_ts = now + (int(pair.cfg.candle_interval) * 60)
+                            pair.pending_candles = candles
+                            pair.status_msg = f"WAITING PULLBACK ({direction.upper()} target: ${pullback_px:.2f})"
+                            console.print(
+                                f"\n[bold yellow]>>> [{sym}] BAR SIZE / EXTENSION GUARD TRIGGERED! "
+                                f"Signal candle range ({candle_range:.2f}) > {guard_mult}x ATR ({atr:.2f}). "
+                                f"Holding market entry; waiting for pullback to {pullback_px:.2f} (Expiry: 60m). <<<[/bold yellow]"
+                            )
+                            report_lines.append(f"  * [bold yellow]{sym:<8}[/bold yellow]: EXHAUSTION GUARD -> WAITING PULLBACK to {pullback_px:.2f}")
+                            continue
+
                         console.print(
                             f"\n[bold green]>>> [{sym}] SIGNAL CONFIRMED: {direction.upper()} on "
                             f"{closed_candle['datetime'].strftime('%H:%M')} candle! <<<[/bold green]"
@@ -713,6 +836,24 @@ class BybitTradingEngine:
         prev = candles[-3]
         curr = candles[-2]
 
+        # Stale Candle Guard: reject any entry if (now - closed_candle_timestamp) > 3 minutes (180s)
+        curr_ts = curr.get("timestamp", 0)
+        curr_open_sec = (curr_ts / 1000.0) if curr_ts > 1e11 else float(curr_ts)
+        try:
+            interval_mins = int(pair.cfg.candle_interval)
+        except Exception:
+            interval_mins = 60
+        candle_close_sec = curr_open_sec + (interval_mins * 60)
+        now_sec = time.time()
+        lag_sec = now_sec - candle_close_sec
+
+        if lag_sec > 180.0:
+            logger.warning(
+                f"[{pair.cfg.symbol}] STALE CANDLE GUARD: Signal rejected! "
+                f"Candle closed {lag_sec:.1f}s ago (> 180s threshold; closed at {curr.get('datetime')})."
+            )
+            return None
+
         pf = prev.get(f"ema_{pair.cfg.ema_fast}")
         ps = prev.get(f"ema_{pair.cfg.ema_slow}")
         cf = curr.get(f"ema_{pair.cfg.ema_fast}")
@@ -805,7 +946,7 @@ class BybitTradingEngine:
         # Compute Dynamic ATR D if enabled
         pair.dynamic_d = pair.cfg.d_ratio
         if pair.cfg.use_dynamic_atr and pair.entry_price > Decimal("0"):
-            atr_val = self._compute_atr(sym)
+            atr_val = self._compute_atr(sym, candles=candles)
             if atr_val > Decimal("0"):
                 pair.dynamic_d = (pair.cfg.atr_mult * atr_val) / pair.entry_price
                 logger.info(f"[{sym}] Dynamic ATR D calibrated: {pair.dynamic_d:.5f} (ATR={atr_val:.2f})")

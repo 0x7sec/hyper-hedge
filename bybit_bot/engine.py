@@ -500,7 +500,10 @@ class BybitTradingEngine:
                     symbol=sym, interval=pair.cfg.candle_interval, limit=100
                 )
                 if len(candles) < 3:
-                    report_lines.append(f"  * [bold]{sym:<8}[/bold]: Fetching klines ({len(candles)}/100)...")
+                    if sym == "AVAXUSDT" and self.config.testnet:
+                        report_lines.append(f"  * [bold]{sym:<8}[/bold]: OFFLINE (Testnet Contract Closed by Bybit)")
+                    else:
+                        report_lines.append(f"  * [bold]{sym:<8}[/bold]: Fetching klines ({len(candles)}/100)...")
                     continue
 
                 # Compute EMA & ADX on candles

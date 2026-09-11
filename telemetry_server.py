@@ -981,10 +981,24 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             p_phase = p.get("phase", "SCANNING")
             fast_e = p.get("fast_ema")
             slow_e = p.get("slow_ema")
-            adx = p.get("adx")
-            trend_str = "BULLISH" if (fast_e and slow_e and fast_e > slow_e) else "BEARISH"
-            trend_col = "#10b981" if trend_str == "BULLISH" else "#ef4444"
-            ind = f"EMA(9/21): {fast_e:.1f}/{slow_e:.1f} | ADX: {adx:.1f}" if (fast_e and slow_e and adx) else "Scanning..."
+            # Check if pair is offline on testnet
+            is_testnet = (state.get("network") == "TESTNET")
+            is_offline = (sym == "AVAXUSDT" and is_testnet) or (px is None and fast_e is None and is_testnet)
+
+            if is_offline:
+                trend_str = "OFFLINE"
+                trend_col = "#94a3b8"
+                ind = "Testnet Contract Closed (Active on Mainnet $20M/d)"
+                px_str = "---"
+            elif fast_e is not None and slow_e is not None:
+                trend_str = "BULLISH" if fast_e > slow_e else "BEARISH"
+                trend_col = "#10b981" if trend_str == "BULLISH" else "#ef4444"
+                adx_str = f"{adx:.1f}" if adx is not None else "--"
+                ind = f"EMA(9/21): {fast_e:.1f}/{slow_e:.1f} | ADX: {adx_str}"
+            else:
+                trend_str = "SCANNING"
+                trend_col = "#94a3b8"
+                ind = "Scanning candles..."
 
             pct_val = tickers_24h.get(sym)
             if pct_val is not None:
@@ -1069,6 +1083,13 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                   <td style="color:{pcol}; font-weight:700; font-family:'JetBrains Mono';">${pnl_val:+.2f} <span style="font-size:11px;">({pnl_pct:+.2f}%)</span></td>
                 </tr>""")
 
+            elif is_offline:
+                card_status_badge = '<span class="status-pill" style="border-color:#f43f5e; color:#f43f5e; background:rgba(244,63,94,0.1);">TESTNET OFFLINE</span>'
+                leg_card_html = f"""
+                <div class="leg-box empty" style="display:flex; flex-direction:column; align-items:center; justify-content:center; padding:16px 8px; text-align:center;">
+                  <div style="font-size:11px; color:#f43f5e; font-weight:600; margin-bottom:4px;">Contract Closed by Bybit on Testnet (Err 110074)</div>
+                  <div style="font-size:10px; color:#94a3b8;">Fully active on Mainnet with $20M+ daily turnover</div>
+                </div>"""
             else:
                 card_status_badge = '<span class="status-pill" style="border-color:#64748b; color:#94a3b8;">SCANNING</span>'
                 slot_info = '<span style="color:#10b981; font-size:11px;">⚡ Slot Available for Entry</span>' if avail_margin_slots > 0 else '<span style="color:#f59e0b; font-size:11px;">⏳ Waiting (Max 4 Active)</span>'

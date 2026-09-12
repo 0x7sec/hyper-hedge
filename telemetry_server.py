@@ -26,6 +26,7 @@ import base64
 import select
 import logging
 from decimal import Decimal
+from typing import Any, Optional, Dict, List
 
 logger = logging.getLogger("telemetry")
 

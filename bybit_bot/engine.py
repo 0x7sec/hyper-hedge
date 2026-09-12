@@ -426,15 +426,40 @@ class BybitTradingEngine:
                             f"Short={pair.short_leg.size} ({pair.short_leg.role})"
                         )
                     elif l_act and not s_act:
-                        pair.phase = "RUNNER_B1"
                         pair.signal_direction = "bullish"
                         pair.entry_price = pair.long_leg.entry_price
                         pair.long_leg.role = "PRIMARY"
+                        # Only enter RUNNER_B1 if stop-loss is already moved to/above entry (BE locked)
+                        if pair.long_leg.trailing_sl and pair.long_leg.trailing_sl >= pair.entry_price:
+                            pair.phase = "RUNNER_B1"
+                        else:
+                            pair.phase = "INCUBATION"
+                        logger.info(
+                            f"[{sym}] Single Long Reconciled: Phase={pair.phase} | Entry={pair.entry_price} | SL={pair.long_leg.trailing_sl}"
+                        )
                     elif s_act and not l_act:
-                        pair.phase = "RUNNER_B1"
                         pair.signal_direction = "bearish"
                         pair.entry_price = pair.short_leg.entry_price
                         pair.short_leg.role = "PRIMARY"
+                        # Only enter RUNNER_B1 if stop-loss is already moved to/below entry
+                        if pair.short_leg.trailing_sl and pair.short_leg.trailing_sl <= pair.entry_price:
+                            pair.phase = "RUNNER_B1"
+                        else:
+                            pair.phase = "INCUBATION"
+                        logger.info(
+                            f"[{sym}] Single Short Reconciled: Phase={pair.phase} | Entry={pair.entry_price} | SL={pair.short_leg.trailing_sl}"
+                        )
+
+                    # Dynamic ATR D calibration upon reconnection
+                    pair.dynamic_d = pair.cfg.d_ratio
+                    if pair.cfg.use_dynamic_atr and pair.entry_price > Decimal("0"):
+                        try:
+                            atr_val = self._compute_atr(sym)
+                            if atr_val > Decimal("0"):
+                                pair.dynamic_d = (pair.cfg.atr_mult * atr_val) / pair.entry_price
+                                logger.info(f"[{sym}] Reconciled Dynamic ATR D: {pair.dynamic_d:.5f} (ATR={atr_val:.4f})")
+                        except Exception as e:
+                            logger.debug(f"[{sym}] ATR calculation error during reconciliation: {e}")
 
         except Exception as e:
             logger.warning(f"Reconciliation check skipped: {e}")

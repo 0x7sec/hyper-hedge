@@ -45,6 +45,48 @@ try:
 except ImportError:
     DEFAULT_PROFILES = {}
 
+def fmt_price(val: Any) -> str:
+    """Format price dynamically according to magnitude (e.g. BTC vs DOGE)."""
+    if val is None:
+        return "---"
+    try:
+        v = float(val)
+    except (ValueError, TypeError):
+        return str(val)
+    if v == 0.0:
+        return "0.00"
+    abs_v = abs(v)
+    if abs_v < 0.001:
+        return f"{v:,.6f}"
+    elif abs_v < 0.1:
+        return f"{v:,.5f}"
+    elif abs_v < 1.0:
+        return f"{v:,.4f}"
+    elif abs_v < 10.0:
+        return f"{v:,.3f}"
+    else:
+        return f"{v:,.2f}"
+
+
+def fmt_delta(val: Any) -> str:
+    """Format price differences / buffers dynamically according to magnitude."""
+    if val is None:
+        return "0.00"
+    try:
+        v = float(val)
+    except (ValueError, TypeError):
+        return str(val)
+    abs_v = abs(v)
+    if abs_v < 0.01:
+        return f"{v:,.5f}"
+    elif abs_v < 1.0:
+        return f"{v:,.4f}"
+    elif abs_v < 10.0:
+        return f"{v:,.2f}"
+    else:
+        return f"{v:,.2f}"
+
+
 # In-memory candle cache: { (symbol, interval, limit): (timestamp, data) }
 CANDLE_CACHE = {}
 CANDLE_CACHE_TTL = 8.0  # seconds
@@ -729,16 +771,16 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             for sym, p in pairs.items():
                 status = p.get("status", "SCANNING")
                 px = p.get("latest_price")
-                px_str = f"${px:,.2f}" if px else "N/A"
+                px_str = f"${fmt_price(px)}" if px else "N/A"
                 ema_fast = p.get("fast_ema")
                 ema_slow = p.get("slow_ema")
                 macro_ema = p.get("macro_ema")
                 adx = p.get("adx")
                 if ema_fast and ema_slow and adx and macro_ema:
                     macro_align = "Bullish (>200EMA)" if (px and px >= macro_ema) else "Bearish (<200EMA)"
-                    ind_str = f"EMA({ema_fast:.1f}/{ema_slow:.1f}) 200EMA={macro_ema:.1f} [{macro_align}] ADX={adx:.1f}"
+                    ind_str = f"EMA({fmt_price(ema_fast)}/{fmt_price(ema_slow)}) 200EMA={fmt_price(macro_ema)} [{macro_align}] ADX={adx:.1f}"
                 elif ema_fast and ema_slow and adx:
-                    ind_str = f"EMA({ema_fast:.1f}/{ema_slow:.1f}) ADX={adx:.1f}"
+                    ind_str = f"EMA({fmt_price(ema_fast)}/{fmt_price(ema_slow)}) ADX={adx:.1f}"
                 else:
                     ind_str = "Scanning..."
 
@@ -754,8 +796,8 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                     unrealized = float(active_leg.get("unrealized_pnl", 0.0) or 0.0)
                     pnl_pct = float(active_leg.get("pnl_pct", 0.0) or 0.0)
                     md.append(f"### {sym} (ACTIVE RUNNER: {side_str} @ {px_str})")
-                    md.append(f"- **Position**: {active_leg.get('size')} {side_str} @ Entry ${entry_px:,.2f} | Unrealized: ${unrealized:+.2f} ({pnl_pct:+.2f}%)")
-                    md.append(f"- **Protection**: Stop-Loss: ${sl_val:,.2f} | Apex TP: ${tp_val:,.2f}")
+                    md.append(f"- **Position**: {active_leg.get('size')} {side_str} @ Entry ${fmt_price(entry_px)} | Unrealized: ${unrealized:+.2f} ({pnl_pct:+.2f}%)")
+                    md.append(f"- **Protection**: Stop-Loss: ${fmt_price(sl_val)} | Apex TP: ${fmt_price(tp_val)}")
                 else:
                     slot_status = "ELIGIBLE FOR ENTRY" if active_count < max_pairs else "WAITING (CONCURRENCY FULL)"
                     md.append(f"### {sym} (`{status}` @ {px_str} - {slot_status})")
@@ -984,8 +1026,8 @@ class TelemetryHandler(BaseHTTPRequestHandler):
 
         for sym, p in pairs.items():
             px = p.get("latest_price")
-            px_str = f"${px:,.2f}" if px else "---"
-            px_val_str = f"${px:,.2f}" if px is not None else "---"
+            px_str = f"${fmt_price(px)}" if px else "---"
+            px_val_str = f"${fmt_price(px)}" if px is not None else "---"
             p_status = p.get("status", "SCANNING")
             p_phase = p.get("phase", "SCANNING")
             fast_e = p.get("fast_ema")
@@ -1004,7 +1046,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                 trend_str = "BULLISH" if fast_e > slow_e else "BEARISH"
                 trend_col = "#10b981" if trend_str == "BULLISH" else "#ef4444"
                 adx_str = f"{adx:.1f}" if adx is not None else "--"
-                ind = f"EMA(9/21): {fast_e:.1f}/{slow_e:.1f} | ADX: {adx_str}"
+                ind = f"EMA(9/21): {fmt_price(fast_e)}/{fmt_price(slow_e)} | ADX: {adx_str}"
             else:
                 trend_str = "SCANNING"
                 trend_col = "#94a3b8"
@@ -1048,15 +1090,26 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                     tp_dist = (px - tp_px) if (px and tp_px) else 0.0
                     tp_dist_pct = (tp_dist / px * 100) if (px and tp_px and px > 0) else 0.0
 
+                # Check whether BE is actually locked (Stop Loss is at or better than Entry Price)
+                is_be_locked = False
+                if sl_px > 0 and entry_px > 0:
+                    if long_leg and sl_px >= entry_px:
+                        is_be_locked = True
+                    elif (not long_leg) and sl_px <= entry_px:
+                        is_be_locked = True
+
                 # Protective SL Badge
-                if p_phase == "INCUBATION":
-                    sl_label = f'<span class="target-tag sl">🛡️ Hard Initial SL: ${sl_px:,.2f}</span><div style="font-size:10px; color:#f87171; margin-top:2px;">Buffer: ${abs(sl_dist):,.2f} ({abs(sl_dist_pct):.2f}%)</div>'
-                    tp_label = f'<span class="target-tag tp">🎯 Apex TP: ${tp_px:,.2f}</span><div style="font-size:10px; color:#34d399; margin-top:2px;">Target: ${abs(tp_dist):,.2f} ({abs(tp_dist_pct):.2f}%)</div>' if tp_px > 0 else '---'
+                if is_be_locked:
+                    sl_label = f'<span class="target-tag sl" style="border-color:#38bdf8;">🔒 True BE Locked: ${fmt_price(sl_px)}</span><div style="font-size:10px; color:#38bdf8; margin-top:2px;">Locked in profit</div>'
+                    card_status_badge = '<span class="status-pill" style="border-color:#38bdf8; color:#38bdf8;">RUNNER ACTIVE</span>'
+                elif p_phase == "INCUBATION":
+                    sl_label = f'<span class="target-tag sl">🛡️ Hard Initial SL: ${fmt_price(sl_px)}</span><div style="font-size:10px; color:#f87171; margin-top:2px;">Buffer: ${fmt_delta(abs(sl_dist))} ({abs(sl_dist_pct):.2f}%)</div>'
                     card_status_badge = '<span class="status-pill" style="border-color:#10b981; color:#10b981;">INCUBATING</span>'
                 else:
-                    sl_label = f'<span class="target-tag sl" style="border-color:#38bdf8;">🔒 True BE Locked: ${sl_px:,.2f}</span><div style="font-size:10px; color:#38bdf8; margin-top:2px;">Locked in profit</div>'
-                    tp_label = f'<span class="target-tag tp">🎯 Apex TP: ${tp_px:,.2f}</span><div style="font-size:10px; color:#34d399; margin-top:2px;">Target: ${abs(tp_dist):,.2f} ({abs(tp_dist_pct):.2f}%)</div>'
-                    card_status_badge = '<span class="status-pill" style="border-color:#38bdf8; color:#38bdf8;">RUNNER ACTIVE</span>'
+                    sl_label = f'<span class="target-tag sl" style="border-color:#f59e0b;">🛡️ Hard Initial SL: ${fmt_price(sl_px)}</span><div style="font-size:10px; color:#f87171; margin-top:2px;">Buffer: ${fmt_delta(abs(sl_dist))} ({abs(sl_dist_pct):.2f}%)</div>'
+                    card_status_badge = '<span class="status-pill" style="border-color:#eab308; color:#eab308;">INITIAL SL ACTIVE</span>'
+
+                tp_label = f'<span class="target-tag tp">🎯 Apex TP: ${fmt_price(tp_px)}</span><div style="font-size:10px; color:#34d399; margin-top:2px;">Target: ${fmt_delta(abs(tp_dist))} ({abs(tp_dist_pct):.2f}%)</div>' if tp_px > 0 else '---'
 
                 leg_card_html = f"""
                 <div class="leg-box {side_badge_cls}" style="border-left: 4px solid {'#10b981' if long_leg else '#ef4444'};">
@@ -1069,12 +1122,12 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                   </div>
                   <div class="leg-body">
                     <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:6px; color:#94a3b8;">
-                      <span>Entry: <b style="color:#f8fafc;">${entry_px:,.2f}</b></span>
-                      <span>{'Peak' if long_leg else 'Trough'}: <b style="color:#f8fafc;">${(peak_px if long_leg else trough_px):,.2f}</b></span>
+                      <span>Entry: <b style="color:#f8fafc;">${fmt_price(entry_px)}</b></span>
+                      <span>{'Peak' if long_leg else 'Trough'}: <b style="color:#f8fafc;">${fmt_price(peak_px if long_leg else trough_px)}</b></span>
                     </div>
                     <div style="display:flex; flex-direction:column; gap:4px;">
-                      <div class="target-tag sl"><span>🛡️ SL: ${sl_px:,.2f}</span><span style="font-size:9px; opacity:0.85;">(-${abs(sl_dist):,.1f})</span></div>
-                      <div class="target-tag tp"><span>🎯 TP: ${tp_px:,.2f}</span><span style="font-size:9px; opacity:0.85;">(+${abs(tp_dist):,.1f})</span></div>
+                      <div class="target-tag sl"><span>🛡️ SL: ${fmt_price(sl_px)}</span><span style="font-size:9px; opacity:0.85;">(-${fmt_delta(abs(sl_dist))})</span></div>
+                      <div class="target-tag tp"><span>🎯 TP: ${fmt_price(tp_px)}</span><span style="font-size:9px; opacity:0.85;">(+${fmt_delta(abs(tp_dist))})</span></div>
                     </div>
                   </div>
                 </div>"""
@@ -1086,7 +1139,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                   <td><span class="badge {side_badge_cls}">{side_symbol}</span></td>
                   <td><span class="badge primary">TREND RUNNER</span></td>
                   <td style="font-family:'JetBrains Mono';">{size_val} <span style="color:#64748b; font-size:11px;">{notional_str}</span></td>
-                  <td style="font-family:'JetBrains Mono';">${entry_px:,.2f}</td>
+                  <td style="font-family:'JetBrains Mono';">${fmt_price(entry_px)}</td>
                   <td style="font-family:'JetBrains Mono'; font-weight:700;">{px_val_str}</td>
                   <td>{sl_label}</td>
                   <td>{tp_label}</td>

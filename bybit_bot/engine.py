@@ -51,6 +51,7 @@ class PairState:
     status_msg: str = "Initializing..."
     fast_ema: Optional[Decimal] = None
     slow_ema: Optional[Decimal] = None
+    macro_ema: Optional[Decimal] = None
     adx_val: Optional[Decimal] = None
 
     # Path B: Asymmetric Size-Flip Trap Hunter state
@@ -562,22 +563,26 @@ class BybitTradingEngine:
                 # Update candles and indicators for active pairs so dashboard remains live
                 try:
                     active_candles = self.service.get_recent_candles(
-                        symbol=sym, interval=pair.cfg.candle_interval, limit=100
+                        symbol=sym, interval=pair.cfg.candle_interval, limit=350
                     )
                     if len(active_candles) >= 3:
+                        macro_p = getattr(pair.cfg, "macro_ema_period", 200)
                         compute_indicators(
                             active_candles,
-                            fast_periods=[pair.cfg.ema_fast, pair.cfg.ema_slow],
+                            fast_periods=[pair.cfg.ema_fast, pair.cfg.ema_slow, macro_p],
                             adx_period=pair.cfg.adx_period,
                         )
                         c_candle = active_candles[-2]
                         fast_v = c_candle.get(f"ema_{pair.cfg.ema_fast}")
                         slow_v = c_candle.get(f"ema_{pair.cfg.ema_slow}")
+                        macro_v = c_candle.get(f"ema_{macro_p}")
                         adx_v  = c_candle.get("adx")
                         if fast_v is not None:
                             pair.fast_ema = Decimal(str(fast_v))
                         if slow_v is not None:
                             pair.slow_ema = Decimal(str(slow_v))
+                        if macro_v is not None:
+                            pair.macro_ema = Decimal(str(macro_v))
                         if adx_v is not None:
                             pair.adx_val = Decimal(str(adx_v))
                 except Exception as e:
@@ -593,19 +598,20 @@ class BybitTradingEngine:
             # Poll recent candles for pair
             try:
                 candles = self.service.get_recent_candles(
-                    symbol=sym, interval=pair.cfg.candle_interval, limit=100
+                    symbol=sym, interval=pair.cfg.candle_interval, limit=350
                 )
                 if len(candles) < 3:
                     if sym == "AVAXUSDT" and self.config.testnet:
                         report_lines.append(f"  * [bold]{sym:<8}[/bold]: OFFLINE (Testnet Contract Closed by Bybit)")
                     else:
-                        report_lines.append(f"  * [bold]{sym:<8}[/bold]: Fetching klines ({len(candles)}/100)...")
+                        report_lines.append(f"  * [bold]{sym:<8}[/bold]: Fetching klines ({len(candles)}/350)...")
                     continue
 
-                # Compute EMA & ADX on candles
+                # Compute EMA (including Macro 200) & ADX on candles
+                macro_p = getattr(pair.cfg, "macro_ema_period", 200)
                 compute_indicators(
                     candles,
-                    fast_periods=[pair.cfg.ema_fast, pair.cfg.ema_slow],
+                    fast_periods=[pair.cfg.ema_fast, pair.cfg.ema_slow, macro_p],
                     adx_period=pair.cfg.adx_period,
                 )
 
@@ -619,10 +625,12 @@ class BybitTradingEngine:
 
                 fast_v = closed_candle.get(f"ema_{pair.cfg.ema_fast}")
                 slow_v = closed_candle.get(f"ema_{pair.cfg.ema_slow}")
+                macro_v = closed_candle.get(f"ema_{macro_p}")
                 adx_v  = closed_candle.get("adx")
 
                 pair.fast_ema = Decimal(str(fast_v)) if fast_v is not None else None
                 pair.slow_ema = Decimal(str(slow_v)) if slow_v is not None else None
+                pair.macro_ema = Decimal(str(macro_v)) if macro_v is not None else None
                 pair.adx_val  = Decimal(str(adx_v)) if adx_v is not None else None
 
                 # Calculate seconds until current forming bar closes
@@ -676,6 +684,10 @@ class BybitTradingEngine:
 
                 # Trend and ADX status
                 trend = "Bullish (EMA9 > EMA21)" if (fast_v and slow_v and fast_v > slow_v) else "Bearish (EMA9 < EMA21)"
+                macro_status = f"200EMA: {float(macro_v):.1f}" if macro_v is not None else "200EMA: N/A"
+                if macro_v is not None:
+                    macro_align = "Bullish" if px >= Decimal(str(macro_v)) else "Bearish"
+                    macro_status += f" ({macro_align})"
                 adx_s = f"{float(adx_v):.1f}" if adx_v else "N/A"
                 f_s = f"{float(fast_v):.2f}" if fast_v else "N/A"
                 s_s = f"{float(slow_v):.2f}" if slow_v else "N/A"
@@ -684,6 +696,7 @@ class BybitTradingEngine:
                 report_lines.append(
                     f"  * [bold]{sym:<8}[/bold]: ${px} | "
                     f"EMA({pair.cfg.ema_fast}/{pair.cfg.ema_slow}): {f_s} / {s_s} ({trend}) | "
+                    f"{macro_status} | "
                     f"ADX: {adx_s} ({adx_ok}) | "
                     f"Bar Close in: {rem_str}"
                 )
@@ -757,6 +770,7 @@ class BybitTradingEngine:
                     "cumulative_pnl": float(pair.cumulative_pnl),
                     "fast_ema": float(pair.fast_ema) if pair.fast_ema is not None else None,
                     "slow_ema": float(pair.slow_ema) if pair.slow_ema is not None else None,
+                    "macro_ema": float(pair.macro_ema) if pair.macro_ema is not None else None,
                     "adx": float(pair.adx_val) if pair.adx_val is not None else None,
                     "long_leg": None,
                     "short_leg": None,
@@ -858,17 +872,46 @@ class BybitTradingEngine:
         ps = prev.get(f"ema_{pair.cfg.ema_slow}")
         cf = curr.get(f"ema_{pair.cfg.ema_fast}")
         cs = curr.get(f"ema_{pair.cfg.ema_slow}")
-        adx = curr.get("adx")
+        adx_curr = curr.get("adx")
+        adx_prev = prev.get("adx")
+        macro_p = getattr(pair.cfg, "macro_ema_period", 200)
+        macro_ema = curr.get(f"ema_{macro_p}")
+        curr_close = curr.get("close")
 
         if any(v is None for v in [pf, ps, cf, cs]):
             return None
 
         if pair.cfg.adx_min > 0:
-            if adx is None or adx <= pair.cfg.adx_min:
+            if adx_curr is None or adx_curr <= pair.cfg.adx_min:
+                return None
+
+        # Rising ADX Momentum requirement: trend strength must be expanding
+        if getattr(pair.cfg, "adx_rising_required", True):
+            if adx_prev is not None and adx_curr is not None and adx_curr <= adx_prev:
+                logger.info(
+                    f"[{pair.cfg.symbol}] ADX MOMENTUM FILTER: Signal rejected "
+                    f"(ADX {float(adx_curr):.1f} <= prev {float(adx_prev):.1f}; momentum fading)."
+                )
                 return None
 
         crossed_up   = (pf <= ps) and (cf > cs)
         crossed_down = (pf >= ps) and (cf < cs)
+
+        # Macro 200-EMA Trend Filter: Never trade counter to macro trend!
+        use_macro = getattr(pair.cfg, "use_macro_trend_filter", True)
+        if use_macro and macro_ema is not None and curr_close is not None:
+            if crossed_up and curr_close < macro_ema:
+                logger.info(
+                    f"[{pair.cfg.symbol}] MACRO TREND FILTER: Bullish crossover rejected! "
+                    f"Price ${float(curr_close):.2f} < 200-EMA ${float(macro_ema):.2f} (Downtrend)."
+                )
+                return None
+            if crossed_down and curr_close > macro_ema:
+                logger.info(
+                    f"[{pair.cfg.symbol}] MACRO TREND FILTER: Bearish crossover rejected! "
+                    f"Price ${float(curr_close):.2f} > 200-EMA ${float(macro_ema):.2f} (Uptrend)."
+                )
+                return None
 
         if crossed_up:
             return "bullish"
@@ -883,21 +926,40 @@ class BybitTradingEngine:
     def _enter_pair_trade(self, pair: PairState, direction: str, candles: Optional[List[Dict[str, Any]]] = None) -> None:
         """Execute simultaneous Long and Short market orders for this pair."""
         sym = pair.cfg.symbol
-        console.print(f"\n[bold yellow]>>> [{sym}] EXECUTING DOUBLE ENTRY (LONG & SHORT HEDGE) <<<[/bold yellow]")
+        target_notional = getattr(pair.cfg, "target_notional", Decimal("1000.0"))
+        calc_size = pair.cfg.size
+        fresh_px = self._get_fresh_price(pair)
+
+        if target_notional and target_notional > Decimal("0") and fresh_px > Decimal("0"):
+            try:
+                rounded_str = self.service.round_qty(target_notional / fresh_px, symbol=sym)
+                calc_size = Decimal(rounded_str)
+                logger.info(f"[{sym}] Dynamic Sizing: ${target_notional} notional @ ${fresh_px:.2f} -> Qty {calc_size}")
+            except Exception as e:
+                logger.warning(f"[{sym}] Dynamic sizing calculation fallback: {e}")
+                calc_size = pair.cfg.size
+
+        if pair.cfg.hedge_ratio == Decimal("0.0"):
+            console.print(
+                f"\n[bold green]>>> [{sym}] EXECUTING SINGLE-LEG TREND RUNNER ({direction.upper()}) "
+                f"@ ${fresh_px:.2f} (Size: {calc_size}, Notional: ${target_notional})! <<<[/bold green]"
+            )
+        else:
+            console.print(f"\n[bold yellow]>>> [{sym}] EXECUTING DOUBLE ENTRY (LONG & SHORT HEDGE) <<<[/bold yellow]")
 
         sl_ratio = pair.cfg.sl_ratio
         tp_ratio = pair.cfg.tp_ratio
 
         if pair.cfg.asymmetric and direction in ("bullish", "bearish"):
-            base = pair.cfg.size
-            counter = pair.cfg.effective_counter_size
+            base = calc_size
+            counter = base * pair.cfg.hedge_ratio
             long_size  = base if direction == "bullish" else counter
             short_size = counter if direction == "bullish" else base
             long_role  = "PRIMARY" if direction == "bullish" else "COUNTER"
             short_role = "COUNTER" if direction == "bullish" else "PRIMARY"
         else:
-            long_size  = pair.cfg.size
-            short_size = pair.cfg.size
+            long_size  = calc_size
+            short_size = calc_size
             long_role  = "PRIMARY"
             short_role = "PRIMARY"
 

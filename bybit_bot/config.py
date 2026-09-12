@@ -352,6 +352,7 @@ class SymbolConfig:
     timeout_bars: int = 50
     extension_guard_mult: Decimal = Decimal("2.50")
     pullback_ratio: Decimal = Decimal("0.38")
+    target_notional: Decimal = Decimal("1000.0")
 
     @classmethod
     def from_profile_or_defaults(cls, symbol: str, overrides: Optional[Dict[str, Any]] = None) -> "SymbolConfig":

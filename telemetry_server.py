@@ -174,7 +174,7 @@ def fetch_24h_tickers() -> dict:
     return res
 
 
-def fetch_candles(symbol: str, interval: str = "60", limit: int = 100) -> dict:
+def fetch_candles(symbol: str, interval: str = "60", limit: int = 300) -> dict:
     """Fetch historical kline candles from Bybit Linear Perpetual API."""
     now = time.time()
     cache_key = (symbol, interval, limit)
@@ -189,7 +189,7 @@ def fetch_candles(symbol: str, interval: str = "60", limit: int = 100) -> dict:
     interval_map = {"1": "1", "3": "3", "5": "5", "15": "15", "30": "30", "60": "60", "120": "120", "240": "240", "D": "D", "W": "W"}
     api_interval = interval_map.get(str(interval), "60")
 
-    url = f"https://{domain}/v5/market/kline?category=linear&symbol={symbol}&interval={api_interval}&limit={min(limit, 100)}"
+    url = f"https://{domain}/v5/market/kline?category=linear&symbol={symbol}&interval={api_interval}&limit={min(limit, 300)}"
 
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "BybitHedgeBot/1.0"})
@@ -220,7 +220,7 @@ def fetch_candles(symbol: str, interval: str = "60", limit: int = 100) -> dict:
 
     if compute_indicators and len(parsed) >= 5:
         try:
-            compute_indicators(parsed, fast_periods=[9, 21], adx_period=14)
+            compute_indicators(parsed, fast_periods=[9, 21, 200], adx_period=14)
         except Exception:
             pass
 
@@ -230,6 +230,7 @@ def fetch_candles(symbol: str, interval: str = "60", limit: int = 100) -> dict:
         time_str = dt.strftime("%H:%M") if interval not in ["D", "W"] else dt.strftime("%m-%d")
         f_ema = round(float(c.get("ema_9")), 2) if c.get("ema_9") is not None else None
         s_ema = round(float(c.get("ema_21")), 2) if c.get("ema_21") is not None else None
+        m_ema = round(float(c.get("ema_200")), 2) if c.get("ema_200") is not None else None
         adx_val = round(float(c.get("adx")), 1) if c.get("adx") is not None else None
 
         candles_out.append({
@@ -242,6 +243,7 @@ def fetch_candles(symbol: str, interval: str = "60", limit: int = 100) -> dict:
             "v": float(c["volume"]),
             "ema9": f_ema,
             "ema21": s_ema,
+            "ema200": m_ema,
             "adx": adx_val,
         })
 
@@ -730,8 +732,15 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                 px_str = f"${px:,.2f}" if px else "N/A"
                 ema_fast = p.get("fast_ema")
                 ema_slow = p.get("slow_ema")
+                macro_ema = p.get("macro_ema")
                 adx = p.get("adx")
-                ind_str = f"EMA({ema_fast:.1f}/{ema_slow:.1f}) ADX={adx:.1f}" if (ema_fast and ema_slow and adx) else "Scanning..."
+                if ema_fast and ema_slow and adx and macro_ema:
+                    macro_align = "Bullish (>200EMA)" if (px and px >= macro_ema) else "Bearish (<200EMA)"
+                    ind_str = f"EMA({ema_fast:.1f}/{ema_slow:.1f}) 200EMA={macro_ema:.1f} [{macro_align}] ADX={adx:.1f}"
+                elif ema_fast and ema_slow and adx:
+                    ind_str = f"EMA({ema_fast:.1f}/{ema_slow:.1f}) ADX={adx:.1f}"
+                else:
+                    ind_str = "Scanning..."
 
                 long_leg = p.get("long_leg")
                 short_leg = p.get("short_leg")

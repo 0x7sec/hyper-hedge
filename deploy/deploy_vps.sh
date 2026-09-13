@@ -130,7 +130,7 @@ SyslogIdentifier=bybit-bot
 WantedBy=multi-user.target
 SERVICE
 
-# 2. Telemetry & AI Monitoring Server Service
+# 2. Telemetry & AI Monitoring Server Service (Port 8080)
 $SUDO tee /etc/systemd/system/bybit-telemetry.service > /dev/null << TELEMSERVICE
 [Unit]
 Description=Bybit Multi-Pair Bot HTTP Telemetry & AI Monitoring Server
@@ -161,9 +161,71 @@ SyslogIdentifier=bybit-telemetry
 WantedBy=multi-user.target
 TELEMSERVICE
 
-# Configure Logrotate for trade audit CSV
+# 3. AMD + FVG Bot Engine Service (BTC, DOGE, SOL, ETH)
+$SUDO tee /etc/systemd/system/amd-bot.service > /dev/null << AMDBOTSERVICE
+[Unit]
+Description=Bybit Macro-Filtered AMD + FVG Bot Engine
+After=network.target network-online.target time-sync.target
+Wants=network-online.target time-sync.target
+
+[Service]
+Type=simple
+User=$CURRENT_USER
+Group=$CURRENT_GROUP
+WorkingDirectory=$APP_DIR
+EnvironmentFile=$APP_DIR/.env
+ExecStart=$APP_DIR/venv/bin/python run_amd_bot.py
+Restart=always
+RestartSec=10
+
+# Resource governance & crash resilience
+LimitNOFILE=65535
+TimeoutStopSec=30
+KillMode=process
+
+# Logging: routed to systemd journal
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=amd-bot
+
+[Install]
+WantedBy=multi-user.target
+AMDBOTSERVICE
+
+# 4. AMD + FVG Telemetry & Dashboard Server (Port 8081)
+$SUDO tee /etc/systemd/system/amd-telemetry.service > /dev/null << AMDTELEMSERVICE
+[Unit]
+Description=Bybit AMD + FVG Bot Telemetry & Dashboard Server (Port 8081)
+After=network.target network-online.target time-sync.target
+Wants=network-online.target time-sync.target
+
+[Service]
+Type=simple
+User=$CURRENT_USER
+Group=$CURRENT_GROUP
+WorkingDirectory=$APP_DIR
+EnvironmentFile=$APP_DIR/.env
+ExecStart=$APP_DIR/venv/bin/python amd_telemetry_server.py
+Restart=always
+RestartSec=5
+
+# Resource governance & crash resilience
+LimitNOFILE=65535
+TimeoutStopSec=15
+KillMode=process
+
+# Logging: routed to systemd journal
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=amd-telemetry
+
+[Install]
+WantedBy=multi-user.target
+AMDTELEMSERVICE
+
+# Configure Logrotate for trade audit CSVs
 $SUDO tee /etc/logrotate.d/bybit-bot > /dev/null << LOGROT
-$APP_DIR/bybit_trades.csv {
+$APP_DIR/bybit_trades.csv $APP_DIR/amd_trades.csv {
     weekly
     missingok
     rotate 12
@@ -175,11 +237,12 @@ $APP_DIR/bybit_trades.csv {
 LOGROT
 $SUDO chmod 644 /etc/logrotate.d/bybit-bot
 
-# Open firewall port 8080 if UFW is active
+# Open firewall ports 8080 and 8081 if UFW is active
 if command -v ufw >/dev/null 2>&1; then
   if $SUDO ufw status | grep -q "Status: active"; then
-    echo "Opening port 8080 in UFW firewall..."
-    $SUDO ufw allow 8080/tcp comment 'Bybit Telemetry API' || true
+    echo "Opening ports 8080 and 8081 in UFW firewall..."
+    $SUDO ufw allow 8080/tcp comment 'Bybit Trend Telemetry API' || true
+    $SUDO ufw allow 8081/tcp comment 'Bybit AMD Telemetry API' || true
   fi
 fi
 
@@ -189,13 +252,15 @@ echo "=== Pre-caching Historical Kline Data for Research Suite ==="
 
 # Reload and restart daemons
 $SUDO systemctl daemon-reload
-$SUDO systemctl enable bybit-bot bybit-telemetry
-$SUDO systemctl restart bybit-bot bybit-telemetry
+$SUDO systemctl enable bybit-bot bybit-telemetry amd-bot amd-telemetry
+$SUDO systemctl restart bybit-bot bybit-telemetry amd-bot amd-telemetry
 
 echo "=== [6/6] Verifying Daemon Status ==="
 sleep 3
 BOT_ACTIVE=false
 TELEM_ACTIVE=false
+AMD_BOT_ACTIVE=false
+AMD_TELEM_ACTIVE=false
 
 if $SUDO systemctl is-active --quiet bybit-bot; then
   BOT_ACTIVE=true
@@ -203,23 +268,32 @@ fi
 if $SUDO systemctl is-active --quiet bybit-telemetry; then
   TELEM_ACTIVE=true
 fi
+if $SUDO systemctl is-active --quiet amd-bot; then
+  AMD_BOT_ACTIVE=true
+fi
+if $SUDO systemctl is-active --quiet amd-telemetry; then
+  AMD_TELEM_ACTIVE=true
+fi
 
 VPS_IP=$(curl -s -4 ifconfig.me 2>/dev/null || curl -s -4 icanhazip.com 2>/dev/null || echo "<vps-ip>")
 
-if [ "$BOT_ACTIVE" = true ] && [ "$TELEM_ACTIVE" = true ]; then
+if [ "$BOT_ACTIVE" = true ] && [ "$TELEM_ACTIVE" = true ] && [ "$AMD_BOT_ACTIVE" = true ] && [ "$AMD_TELEM_ACTIVE" = true ]; then
   echo "=============================================================================="
-  echo ">>> SUCCESS: All services ACTIVE and running on VPS! <<<"
+  echo ">>> SUCCESS: All 4 services ACTIVE and running concurrently on VPS! <<<"
   echo "=============================================================================="
-  echo "  • bybit-bot.service      : ACTIVE (Trading Engine)"
-  echo "  • bybit-telemetry.service: ACTIVE (HTTP Telemetry & AI API)"
+  echo "  • bybit-bot.service      : ACTIVE (Trend Runner Engine)"
+  echo "  • bybit-telemetry.service: ACTIVE (Trend Dashboard on Port 8080)"
+  echo "  • amd-bot.service        : ACTIVE (Macro AMD + FVG Bot Engine)"
+  echo "  • amd-telemetry.service  : ACTIVE (AMD Dashboard on Port 8081)"
   echo "------------------------------------------------------------------------------"
-  echo "📊 Web Dashboard URL     : http://${VPS_IP}:8080/dashboard?password=${FINAL_TPASS}"
-  echo "🤖 AI Monitoring Endpoint: http://${VPS_IP}:8080/api/ai-summary?password=${FINAL_TPASS}"
-  echo "🔑 Telemetry Password    : ${FINAL_TPASS}"
+  echo "📊 Trend Bot Dashboard   : http://${VPS_IP}:8080/dashboard?password=${FINAL_TPASS}"
+  echo "⚡ AMD Bot Dashboard     : http://${VPS_IP}:8081/dashboard?password=${FINAL_TPASS}"
+  echo "🤖 AMD AI API Endpoint   : http://${VPS_IP}:8081/api/ai-summary?password=${FINAL_TPASS}"
+  echo "🔑 Access Password       : ${FINAL_TPASS}"
   echo "=============================================================================="
-  $SUDO systemctl status bybit-bot bybit-telemetry --no-pager
+  $SUDO systemctl status bybit-bot bybit-telemetry amd-bot amd-telemetry --no-pager
 else
   echo "ERROR: One or more services failed to start."
-  $SUDO systemctl status bybit-bot bybit-telemetry --no-pager
+  $SUDO systemctl status bybit-bot bybit-telemetry amd-bot amd-telemetry --no-pager
   exit 1
 fi

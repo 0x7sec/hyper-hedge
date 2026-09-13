@@ -27,6 +27,7 @@ dist/
 *.csv
 *.pkl
 bot_state.json*
+amd_bot_state.json*
 
 # ── Operating System & IDEs ───────────────────────────────────────────────────
 .DS_Store
@@ -40,3 +41,4 @@ scratch/*
 #jesse/*
 jesse/
 research_runs/
+.neurova/

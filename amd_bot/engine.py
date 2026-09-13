@@ -709,6 +709,9 @@ class AMDEngine:
 
     def _dump_state_atomic(self) -> None:
         """Atomically write full engine state to amd_bot_state.json."""
+        acc_bal = self.client.get_wallet_balance()
+        tot_realized_pnl = sum(t.get("net_pnl", 0.0) for t in self.closed_trades)
+
         active_slots = sum(1 for p in self.pairs.values() if p.phase in ["IN_POSITION", "FVG_PENDING"])
         used_margin = active_slots * MARGIN_PER_TRADE
         empty_slots = max(0, MAX_CONCURRENT_PAIRS - active_slots)

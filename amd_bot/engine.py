@@ -21,7 +21,8 @@ from pybit.unified_trading import WebSocket
 
 from amd_bot.config import (
     STATE_FILE, TRADES_FILE, LOG_FILE, AMD_PROFILES, AMDPairProfile,
-    ACTIVE_SYMBOLS, REST_URL, WS_LINEAR_URL, TESTNET, MAX_CONCURRENT_PAIRS
+    ACTIVE_SYMBOLS, REST_URL, WS_LINEAR_URL, TESTNET, MAX_CONCURRENT_PAIRS,
+    ACCOUNT_CAPITAL, MARGIN_PER_TRADE, DEFAULT_LEVERAGE
 )
 from amd_bot.client import AMDBitService
 
@@ -161,8 +162,16 @@ class AMDEngine:
         self.symbols = symbols if symbols else ACTIVE_SYMBOLS
         self.is_running = False
 
-        # Session Start
+        # Session Start (Persist across daemon restarts so uptime never resets)
         self.session_start = datetime.now()
+        if os.path.exists(STATE_FILE):
+            try:
+                with open(STATE_FILE, "r", encoding="utf-8") as f:
+                    prev_state = json.load(f)
+                    if "session_start_iso" in prev_state and prev_state["session_start_iso"]:
+                        self.session_start = datetime.fromisoformat(prev_state["session_start_iso"])
+            except Exception:
+                pass
 
         # State Mapping: {symbol: PairAMDState}
         self.pairs: Dict[str, PairAMDState] = {}
@@ -416,11 +425,17 @@ class AMDEngine:
                             pending_tp = max(pair.bsl, pending_ep + pair.profile.rr_ratio * risk)
                             order_id_link = f"amd_{pair.symbol.lower()}_{int(time.time())}"
 
-                            # Check active position slot count across portfolio
-                            active_positions = sum(1 for p in self.pairs.values() if p.phase == "IN_POSITION")
-                            if active_positions < MAX_CONCURRENT_PAIRS:
+                            # Strict $1,000 Capital Guard: Check active position slot count across portfolio
+                            active_slots = sum(1 for p in self.pairs.values() if p.phase in ["IN_POSITION", "FVG_PENDING"])
+                            if active_slots < MAX_CONCURRENT_PAIRS:
+                                # Strict sizing: $250 margin * 4x leverage = $1,000 notional
+                                target_notional = MARGIN_PER_TRADE * pair.profile.leverage
+                                raw_qty = target_notional / pending_ep
+                                order_qty = round(raw_qty) if pair.profile.qty_precision == 0 else round(raw_qty, pair.profile.qty_precision)
+                                order_qty = max(order_qty, pair.profile.min_order_qty)
+
                                 res = self.client.place_fvg_limit_order(
-                                    pair.symbol, "Buy", pair.profile.base_size, pending_ep, order_id_link
+                                    pair.symbol, "Buy", order_qty, pending_ep, order_id_link
                                 )
                                 if res:
                                     pair.phase = "FVG_PENDING"
@@ -432,8 +447,9 @@ class AMDEngine:
                                     pair.pending_order_link_id = order_id_link
                                     pair.pending_expire_time = time.time() + (pair.profile.order_timeout_minutes * 60)
                                     logger.info(
-                                        f"[{pair.symbol}] FVG FORMED! Limit BUY armed @ {pending_ep:.2f} | "
-                                        f"SL: {pending_sl:.2f} | TP: {pending_tp:.2f} (Expires in 60m)"
+                                        f"[{pair.symbol}] FVG FORMED! Limit BUY armed: {order_qty} @ {pending_ep:.2f} "
+                                        f"($1,000 notional / $250 margin) | SL: {pending_sl:.2f} | TP: {pending_tp:.2f} "
+                                        f"| Slots: {active_slots + 1}/{MAX_CONCURRENT_PAIRS} active"
                                     )
 
                 # Bearish FVG: prev2_candle Low > cur_candle High
@@ -456,10 +472,17 @@ class AMDEngine:
                             pending_tp = min(pair.ssl, pending_ep - pair.profile.rr_ratio * risk)
                             order_id_link = f"amd_{pair.symbol.lower()}_{int(time.time())}"
 
-                            active_positions = sum(1 for p in self.pairs.values() if p.phase == "IN_POSITION")
-                            if active_positions < MAX_CONCURRENT_PAIRS:
+                            # Strict $1,000 Capital Guard: Check active position slot count across portfolio
+                            active_slots = sum(1 for p in self.pairs.values() if p.phase in ["IN_POSITION", "FVG_PENDING"])
+                            if active_slots < MAX_CONCURRENT_PAIRS:
+                                # Strict sizing: $250 margin * 4x leverage = $1,000 notional
+                                target_notional = MARGIN_PER_TRADE * pair.profile.leverage
+                                raw_qty = target_notional / pending_ep
+                                order_qty = round(raw_qty) if pair.profile.qty_precision == 0 else round(raw_qty, pair.profile.qty_precision)
+                                order_qty = max(order_qty, pair.profile.min_order_qty)
+
                                 res = self.client.place_fvg_limit_order(
-                                    pair.symbol, "Sell", pair.profile.base_size, pending_ep, order_id_link
+                                    pair.symbol, "Sell", order_qty, pending_ep, order_id_link
                                 )
                                 if res:
                                     pair.phase = "FVG_PENDING"
@@ -471,8 +494,9 @@ class AMDEngine:
                                     pair.pending_order_link_id = order_id_link
                                     pair.pending_expire_time = time.time() + (pair.profile.order_timeout_minutes * 60)
                                     logger.info(
-                                        f"[{pair.symbol}] BEARISH FVG FORMED! Limit SELL armed @ {pending_ep:.2f} | "
-                                        f"SL: {pending_sl:.2f} | TP: {pending_tp:.2f} (Expires in 60m)"
+                                        f"[{pair.symbol}] BEARISH FVG FORMED! Limit SELL armed: {order_qty} @ {pending_ep:.2f} "
+                                        f"($1,000 notional / $250 margin) | SL: {pending_sl:.2f} | TP: {pending_tp:.2f} "
+                                        f"| Slots: {active_slots + 1}/{MAX_CONCURRENT_PAIRS} active"
                                     )
 
             elif bars_since > 3:
@@ -685,13 +709,23 @@ class AMDEngine:
 
     def _dump_state_atomic(self) -> None:
         """Atomically write full engine state to amd_bot_state.json."""
-        acc_bal = self.client.get_wallet_balance()
-        tot_realized_pnl = sum(t["net_pnl"] for t in self.closed_trades)
+        active_slots = sum(1 for p in self.pairs.values() if p.phase in ["IN_POSITION", "FVG_PENDING"])
+        used_margin = active_slots * MARGIN_PER_TRADE
+        empty_slots = max(0, MAX_CONCURRENT_PAIRS - active_slots)
+        cash_reserve = max(0.0, ACCOUNT_CAPITAL - used_margin)
 
         state_data = {
             "timestamp": datetime.now().isoformat(),
             "session_start_iso": self.session_start.isoformat(),
-            "uptime_seconds": int((datetime.now() - self.session_start).total_seconds()),
+            "uptime_seconds": max(0, int((datetime.now() - self.session_start).total_seconds())),
+            "concurrency": {
+                "total_slots": MAX_CONCURRENT_PAIRS,
+                "active_slots": active_slots,
+                "empty_slots": empty_slots,
+                "margin_in_use": used_margin,
+                "cash_reserve": cash_reserve,
+                "allocated_capital": ACCOUNT_CAPITAL,
+            },
             "account": {
                 "equity": acc_bal.get("equity", 0.0),
                 "wallet_balance": acc_bal.get("wallet_balance", 0.0),

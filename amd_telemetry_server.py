@@ -395,33 +395,57 @@ class AMDTelemetryHandler(BaseHTTPRequestHandler):
         exch_trades = bybit_acc.get("recent_trades", [])[:50]
 
         up_sec = state.get("uptime_seconds", 0)
-        up_h = up_sec // 3600
+        up_d = up_sec // 86400
+        up_h = (up_sec % 86400) // 3600
         up_m = (up_sec % 3600) // 60
-        uptime_str = f"{up_h}h {up_m}m"
+        up_s = up_sec % 60
+        uptime_str = f"{up_d}d {up_h}h {up_m}m {up_s}s" if up_d > 0 else f"{up_h}h {up_m}m {up_s}s"
 
         equity = bybit_acc.get("equity") or state.get("account", {}).get("equity", 0.0)
         wallet = bybit_acc.get("wallet_balance") or state.get("account", {}).get("wallet_balance", 0.0)
         avail = bybit_acc.get("available_balance") or state.get("account", {}).get("available_balance", 0.0)
         tot_realized_pnl = bybit_acc.get("total_realized_pnl") or state.get("account", {}).get("total_realized_pnl", 0.0)
 
-        # Stats Bar HTML
+        conc = state.get("concurrency", {})
+        total_slots = conc.get("total_slots", 4)
+        active_slots = conc.get("active_slots", sum(1 for p in symbols.values() if p.get("phase") in ["IN_POSITION", "FVG_PENDING"]))
+        empty_slots = conc.get("empty_slots", max(0, total_slots - active_slots))
+        margin_in_use = conc.get("margin_in_use", active_slots * 250.0)
+        cash_reserve = conc.get("cash_reserve", max(0.0, 1000.0 - margin_in_use))
+        allocated_capital = conc.get("allocated_capital", 1000.0)
+
+        # Stats Bar HTML (Strict $1K Cap & Concurrency Slots Accounting)
         stats_html = f"""
         <div class="stat-card">
-          <div class="stat-label">Total Equity</div>
+          <div class="stat-label">Concurrency Slots</div>
+          <div class="stat-val" style="color:{'#10b981' if empty_slots > 0 else '#f59e0b'};">
+            {active_slots} / {total_slots} Active
+          </div>
+          <div style="font-size:12px; color:#94a3b8; margin-top:2px;">
+            <strong style="color:#38bdf8;">{empty_slots} Empty Slots</strong> | Strict Cap: ${allocated_capital:,.0f}
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Allocated Capital ($1K Cap)</div>
+          <div class="stat-val" style="color:#38bdf8;">${allocated_capital:,.2f}</div>
+          <div style="font-size:12px; color:#94a3b8; margin-top:2px;">
+            In Use: <strong style="color:#cbd5e1;">${margin_in_use:,.0f}</strong> | Reserve: <strong style="color:#10b981;">${cash_reserve:,.0f} USDT</strong>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Total Account Equity</div>
           <div class="stat-val">${equity:,.2f}</div>
+          <div style="font-size:12px; color:#94a3b8; margin-top:2px;">
+            Available: ${avail:,.2f} USDT
+          </div>
         </div>
         <div class="stat-card">
-          <div class="stat-label">Wallet Balance</div>
-          <div class="stat-val">${wallet:,.2f}</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Available Margin</div>
-          <div class="stat-val">${avail:,.2f}</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Realized PnL</div>
+          <div class="stat-label">Realized Net PnL</div>
           <div class="stat-val" style="color:{'#10b981' if tot_realized_pnl>=0 else '#ef4444'};">
             ${tot_realized_pnl:+,.2f}
+          </div>
+          <div style="font-size:12px; color:#94a3b8; margin-top:2px;">
+            Closed Trades: <strong>{len(bot_trades)}</strong>
           </div>
         </div>
         """
@@ -660,13 +684,23 @@ class AMDTelemetryHandler(BaseHTTPRequestHandler):
         wallet = bybit_acc.get("wallet_balance") or state.get("account", {}).get("wallet_balance", 0.0)
         realized_pnl = bybit_acc.get("total_realized_pnl") or state.get("account", {}).get("total_realized_pnl", 0.0)
 
+        conc = state.get("concurrency", {})
+        total_slots = conc.get("total_slots", 4)
+        active_slots = conc.get("active_slots", sum(1 for p in symbols_data.values() if p.get("phase") in ["IN_POSITION", "FVG_PENDING"]))
+        empty_slots = conc.get("empty_slots", max(0, total_slots - active_slots))
+        margin_in_use = conc.get("margin_in_use", active_slots * 250.0)
+        cash_reserve = conc.get("cash_reserve", max(0.0, 1000.0 - margin_in_use))
+        allocated_capital = conc.get("allocated_capital", 1000.0)
+
         md = []
         md.append("# Bybit AMD + FVG Bot: AI Operational Summary")
         md.append(f"**Strategy**: Macro-Filtered AMD + FVG (15m Execution + 4H 200-EMA Bias)")
-        md.append(f"**Generated**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')} | **Uptime**: {up_h}h {up_m}m | **Environment**: {env_label}\n")
-        md.append("## 1. Unified Account & Capital Health")
-        md.append(f"- **Equity**: ${equity:,.2f} USDT | **Wallet Balance**: ${wallet:,.2f} USDT")
-        md.append(f"- **Realized PnL**: ${realized_pnl:+,.2f} USDT | **Closed Trades Count**: {bybit_acc.get('trades_count', 0)}\n")
+        md.append(f"**Generated**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')} | **Uptime**: {uptime_str} | **Environment**: {env_label}\n")
+        md.append("## 1. Capital Risk & Concurrency Slots")
+        md.append(f"- **Allocated Capital Bound**: ${allocated_capital:,.2f} USDT (Strict Cap)")
+        md.append(f"- **Concurrency Slots**: {active_slots} / {total_slots} Active ({empty_slots} Empty Slots)")
+        md.append(f"- **Margin In Use**: ${margin_in_use:,.2f} USDT | **Cash Reserve**: ${cash_reserve:,.2f} USDT")
+        md.append(f"- **Account Total Equity**: ${equity:,.2f} USDT | **Realized Net PnL**: ${realized_pnl:+,.2f} USDT\n")
 
         md.append("## 2. Active Market Engines (15m AMD + 4H Bias)")
         for sym, d in symbols_data.items():

@@ -36,7 +36,7 @@ LOG_FILE = os.path.join(BASE_DIR, "amd_bot.log")
 
 # Portfolio Risk Settings
 ACCOUNT_CAPITAL = float(os.environ.get("ACCOUNT_CAPITAL", "1000.0"))
-MAX_CONCURRENT_PAIRS = int(os.environ.get("MAX_CONCURRENT_PAIRS", "2"))
+MAX_CONCURRENT_PAIRS = int(os.environ.get("MAX_CONCURRENT_PAIRS", "4"))
 MARGIN_PER_TRADE = float(os.environ.get("MARGIN_PER_TRADE", "250.0"))
 DEFAULT_LEVERAGE = int(os.environ.get("LEVERAGE", "4"))
 

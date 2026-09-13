@@ -2,7 +2,7 @@
 """
 Dedicated Real-Time Web Dashboard & AI Telemetry Server for AMD + FVG Bot.
 Runs on Port 8081 (isolated from the existing port 8080 telemetry server).
-Provides password-protected dark-mode dashboard, JSON API, live logs, and /api/ai-summary.
+Features full RFC 6455 WebSocket live streaming (zero page reload), JSON API, and /api/ai-summary.
 """
 
 import os
@@ -11,6 +11,10 @@ import json
 import csv
 import re
 import time
+import struct
+import base64
+import hashlib
+import select
 import secrets
 import subprocess
 import urllib.request
@@ -307,6 +311,268 @@ class AMDTelemetryHandler(BaseHTTPRequestHandler):
         </div></body></html>"""
         self.wfile.write(html.encode("utf-8"))
 
+    # ==========================================================================
+    # WEBSOCKET STREAMING (RFC 6455)
+    # ==========================================================================
+
+    def _build_ws_frame(self, payload_bytes: bytes) -> bytes:
+        length = len(payload_bytes)
+        if length <= 125:
+            header = struct.pack("!BB", 0x81, length)
+        elif length <= 65535:
+            header = struct.pack("!BBH", 0x81, 126, length)
+        else:
+            header = struct.pack("!BBQ", 0x81, 127, length)
+        return header + payload_bytes
+
+    def _handle_ws(self):
+        """Handle RFC 6455 WebSocket upgrade and stream live telemetry updates every 2s."""
+        key = self.headers.get("Sec-WebSocket-Key", "")
+        if not key:
+            self.send_error(400, "Bad Request: Missing Sec-WebSocket-Key")
+            return
+
+        guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+        accept_token = base64.b64encode(hashlib.sha1((key + guid).encode("utf-8")).digest()).decode("utf-8")
+
+        handshake = (
+            "HTTP/1.1 101 Switching Protocols\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Accept: {accept_token}\r\n"
+            "\r\n"
+        )
+        try:
+            self.connection.sendall(handshake.encode("utf-8"))
+        except Exception:
+            return
+
+        sock = self.connection
+        sock.setblocking(True)
+        sock.settimeout(2.0)
+
+        try:
+            while True:
+                payload = self._get_live_telemetry_payload()
+                data_bytes = json.dumps(payload).encode("utf-8")
+                frame = self._build_ws_frame(data_bytes)
+                sock.sendall(frame)
+
+                start_wait = time.time()
+                while time.time() - start_wait < 2.0:
+                    r, _, _ = select.select([sock], [], [], 0.4)
+                    if r:
+                        try:
+                            raw = sock.recv(4096)
+                            if not raw:
+                                return
+                            opcode = raw[0] & 0x0F
+                            if opcode == 0x8:
+                                sock.sendall(bytes([0x88, 0x00]))
+                                return
+                            elif opcode == 0x9:
+                                sock.sendall(bytes([0x8A, 0x00]))
+                        except (BlockingIOError, InterruptedError):
+                            continue
+                        except Exception:
+                            return
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        except Exception:
+            pass
+
+    # ==========================================================================
+    # DYNAMIC PAYLOAD BUILDER FOR SOCKET INJECTION
+    # ==========================================================================
+
+    def _get_live_telemetry_payload(self) -> Dict[str, Any]:
+        state = read_state()
+        bybit_acc = fetch_bybit_account_and_trades()
+        tickers_24h = fetch_24h_tickers()
+
+        symbols = state.get("symbols", {})
+        bot_trades = read_trades(limit=50)
+        exch_trades = bybit_acc.get("recent_trades", [])[:50]
+
+        up_sec = state.get("uptime_seconds", 0)
+        up_h = up_sec // 3600
+        up_m = (up_sec % 3600) // 60
+        uptime_str = f"{up_h}h {up_m}m"
+
+        equity = bybit_acc.get("equity") or state.get("account", {}).get("equity", 0.0)
+        wallet = bybit_acc.get("wallet_balance") or state.get("account", {}).get("wallet_balance", 0.0)
+        avail = bybit_acc.get("available_balance") or state.get("account", {}).get("available_balance", 0.0)
+        tot_realized_pnl = bybit_acc.get("total_realized_pnl") or state.get("account", {}).get("total_realized_pnl", 0.0)
+
+        # Stats Bar HTML
+        stats_html = f"""
+        <div class="stat-card">
+          <div class="stat-label">Total Equity</div>
+          <div class="stat-val">${equity:,.2f}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Wallet Balance</div>
+          <div class="stat-val">${wallet:,.2f}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Available Margin</div>
+          <div class="stat-val">${avail:,.2f}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Realized PnL</div>
+          <div class="stat-val" style="color:{'#10b981' if tot_realized_pnl>=0 else '#ef4444'};">
+            ${tot_realized_pnl:+,.2f}
+          </div>
+        </div>
+        """
+
+        # Pair Cards HTML
+        cards_html = []
+        for sym, d in symbols.items():
+            icon = get_coin_icon(sym, size=24)
+            phase = d.get("phase", "ACCUMULATING")
+            bias = d.get("macro_bias", "NEUTRAL")
+
+            bias_color = "#10b981" if bias == "BULLISH" else ("#ef4444" if bias == "BEARISH" else "#94a3b8")
+            phase_bg = "#1e293b"
+            phase_color = "#94a3b8"
+            if phase == "SWEEP_DETECTED":
+                phase_bg = "#854d0e"
+                phase_color = "#fef08a"
+            elif phase == "FVG_PENDING":
+                phase_bg = "#581c87"
+                phase_color = "#e9d5ff"
+            elif phase == "IN_POSITION":
+                phase_bg = "#064e3b"
+                phase_color = "#6ee7b7"
+
+            mp_str = fmt_price(d.get("mark_price"))
+            bsl_str = fmt_price(d.get("bsl"))
+            ssl_str = fmt_price(d.get("ssl"))
+            ema_str = fmt_price(d.get("macro_200_ema"))
+
+            t24 = tickers_24h.get(sym, 0.0)
+            t24_col = "#10b981" if t24 >= 0 else "#ef4444"
+            t24_badge = f'<span style="font-size:11px; font-weight:700; color:{t24_col};">{t24:+,.2f}% (24h)</span>'
+
+            pos_info_html = ""
+            if phase == "IN_POSITION":
+                pnl = d.get("floating_pnl", 0.0)
+                pnl_pct = d.get("floating_pnl_pct", 0.0)
+                pnl_color = "#10b981" if pnl >= 0 else "#ef4444"
+                pos_info_html = f"""
+                <div style="margin-top:12px; padding:10px; background:#0f172a; border-radius:8px; border:1px solid #1e293b;">
+                  <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                    <span style="font-weight:700; color:{'#10b981' if d.get('position_side')=='LONG' else '#ef4444'}">{d.get('position_side')} {d.get('position_size')}</span>
+                    <span style="font-weight:700; color:{pnl_color};">${pnl:+,.2f} ({pnl_pct:+,.2f}%)</span>
+                  </div>
+                  <div style="font-size:12px; color:#94a3b8;">
+                    Entry: ${fmt_price(d.get('entry_price'))} | SL: ${fmt_price(d.get('stop_loss'))} | TP: ${fmt_price(d.get('take_profit'))}
+                  </div>
+                </div>"""
+            elif phase == "FVG_PENDING":
+                pos_info_html = f"""
+                <div style="margin-top:12px; padding:10px; background:#2e1065; border-radius:8px; border:1px solid #581c87;">
+                  <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                    <span style="font-weight:700; color:#e9d5ff;">LIMIT {d.get('pending_side')} ARMED</span>
+                    <span style="font-weight:700; color:#cbd5e1;">@ ${fmt_price(d.get('pending_ep'))}</span>
+                  </div>
+                  <div style="font-size:12px; color:#c084fc;">
+                    SL: ${fmt_price(d.get('pending_sl'))} | TP: ${fmt_price(d.get('pending_tp'))} (Expires 60m)
+                  </div>
+                </div>"""
+
+            card = f"""
+            <div class="card">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                <div style="display:flex; align-items:center; gap:10px;">
+                  {icon}
+                  <div>
+                    <span style="font-size:16px; font-weight:800; color:#f8fafc;">{sym}</span>
+                    <div style="font-size:12px; color:#94a3b8;">${mp_str} &nbsp; {t24_badge}</div>
+                  </div>
+                </div>
+                <div style="text-align:right;">
+                  <span class="badge" style="background:{phase_bg}; color:{phase_color};">{phase}</span>
+                  <div style="margin-top:4px;"><span class="badge" style="background:#0f172a; border:1px solid {bias_color}; color:{bias_color}; font-size:10px;">4H {bias}</span></div>
+                </div>
+              </div>
+
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:12px; background:#0b0f19; padding:8px; border-radius:6px;">
+                <div><span style="color:#64748b;">4H 200-EMA:</span> <span style="color:#cbd5e1; font-weight:600;">${ema_str}</span></div>
+                <div><span style="color:#64748b;">15m ATR:</span> <span style="color:#cbd5e1; font-weight:600;">${fmt_price(d.get('current_atr'))}</span></div>
+                <div><span style="color:#64748b;">BSL (High):</span> <span style="color:#cbd5e1; font-weight:600;">${bsl_str}</span></div>
+                <div><span style="color:#64748b;">SSL (Low):</span> <span style="color:#cbd5e1; font-weight:600;">${ssl_str}</span></div>
+              </div>
+              {pos_info_html}
+            </div>"""
+            cards_html.append(card)
+
+        # Internal Bot Trades Rows
+        bot_rows = []
+        for t in reversed(bot_trades):
+            net = t.get("net_pnl", 0.0)
+            net_col = "#10b981" if net >= 0 else "#ef4444"
+            side_col = "#10b981" if t.get("side") == "LONG" else "#ef4444"
+            row = f"""
+            <tr>
+              <td>{t.get('timestamp')}</td>
+              <td><strong>{t.get('symbol')}</strong></td>
+              <td style="color:{side_col}; font-weight:700;">{t.get('side')}</td>
+              <td>${fmt_price(t.get('entry_price'))}</td>
+              <td>${fmt_price(t.get('exit_price'))}</td>
+              <td>{t.get('qty')}</td>
+              <td style="color:{net_col}; font-weight:700;">${net:+,.2f}</td>
+              <td><span class="badge" style="background:#1e293b; color:#cbd5e1;">{t.get('exit_reason')}</span></td>
+              <td>{t.get('duration_minutes', 0):.1f}m</td>
+            </tr>"""
+            bot_rows.append(row)
+        bot_tbody = "".join(bot_rows) if bot_rows else '<tr><td colspan="9" style="text-align:center; color:#64748b; padding:20px;">No internal AMD trades recorded yet.</td></tr>'
+
+        # Exchange Trades Rows
+        exch_rows = []
+        for t in exch_trades:
+            pnl = t.get("closed_pnl", 0.0)
+            pnl_col = "#10b981" if pnl >= 0 else "#ef4444"
+            side_col = "#10b981" if "buy" in t.get("side", "").lower() else "#ef4444"
+            row = f"""
+            <tr>
+              <td>{t.get('timestamp')}</td>
+              <td><strong>{t.get('symbol')}</strong></td>
+              <td style="color:{side_col}; font-weight:700;">{t.get('side')}</td>
+              <td>${fmt_price(t.get('entry_price'))}</td>
+              <td>${fmt_price(t.get('exit_price'))}</td>
+              <td>{t.get('qty')}</td>
+              <td style="color:{pnl_col}; font-weight:700;">${pnl:+,.2f}</td>
+              <td><span class="badge" style="background:#1e293b; color:#cbd5e1;">Exchange Fill</span></td>
+              <td>---</td>
+            </tr>"""
+            exch_rows.append(row)
+        exch_tbody = "".join(exch_rows) if exch_rows else '<tr><td colspan="9" style="text-align:center; color:#64748b; padding:20px;">No exchange trades found.</td></tr>'
+
+        # Logs
+        log_lines = []
+        if os.path.exists(LOG_FILE):
+            try:
+                with open(LOG_FILE, "r", encoding="utf-8") as f:
+                    log_lines = [line.rstrip("\r\n") for line in f][-35:]
+            except Exception:
+                pass
+        sanitized_logs = "\n".join(sanitize_logs(l) for l in log_lines)
+
+        return {
+            "uptime": uptime_str,
+            "stats_html": stats_html,
+            "markets_html": "".join(cards_html),
+            "bot_trades_html": bot_tbody,
+            "exch_trades_html": exch_tbody,
+            "logs": sanitized_logs,
+        }
+
+    # ==========================================================================
+    # HTTP ROUTING
+    # ==========================================================================
+
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
@@ -315,7 +581,11 @@ class AMDTelemetryHandler(BaseHTTPRequestHandler):
             self._send_unauthorized()
             return
 
-        if path == "/api/status":
+        if path == "/ws":
+            self._handle_ws()
+        elif path == "/api/live-status":
+            self._handle_api_live_status()
+        elif path == "/api/status":
             self._handle_api_status()
         elif path == "/api/ai-summary":
             self._handle_api_ai_summary()
@@ -328,6 +598,14 @@ class AMDTelemetryHandler(BaseHTTPRequestHandler):
         else:
             self.send_response(404)
             self.end_headers()
+
+    def _handle_api_live_status(self):
+        payload = self._get_live_telemetry_payload()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(json.dumps(payload).encode("utf-8"))
 
     def _handle_api_status(self):
         state = read_state()
@@ -421,163 +699,19 @@ class AMDTelemetryHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(output.encode("utf-8"))
 
+    # ==========================================================================
+    # DASHBOARD HTML (WITH LIVE WEBSOCKET LISTENER)
+    # ==========================================================================
+
     def _handle_dashboard(self):
-        state = read_state()
-        bybit_acc = fetch_bybit_account_and_trades()
-        tickers_24h = fetch_24h_tickers()
-
-        symbols = state.get("symbols", {})
-        bot_trades = read_trades(limit=50)
-        exch_trades = bybit_acc.get("recent_trades", [])[:50]
-
-        up_sec = state.get("uptime_seconds", 0)
-        up_h = up_sec // 3600
-        up_m = (up_sec % 3600) // 60
-        uptime_str = f"{up_h}h {up_m}m"
+        payload = self._get_live_telemetry_payload()
 
         testnet = os.environ.get("TESTNET", "true").lower() in ["1", "true", "yes"]
         env_badge = "TESTNET ACTIVE" if testnet else "MAINNET (LIVE CAPITAL)"
         env_bg = "#064e3b" if testnet else "#b91c1c"
         env_color = "#6ee7b7" if testnet else "#fecaca"
 
-        equity = bybit_acc.get("equity") or state.get("account", {}).get("equity", 0.0)
-        wallet = bybit_acc.get("wallet_balance") or state.get("account", {}).get("wallet_balance", 0.0)
-        avail = bybit_acc.get("available_balance") or state.get("account", {}).get("available_balance", 0.0)
-        tot_realized_pnl = bybit_acc.get("total_realized_pnl") or state.get("account", {}).get("total_realized_pnl", 0.0)
-
-        # Build Symbol Cards
-        cards_html = []
-        for sym, d in symbols.items():
-            icon = get_coin_icon(sym, size=24)
-            phase = d.get("phase", "ACCUMULATING")
-            bias = d.get("macro_bias", "NEUTRAL")
-
-            bias_color = "#10b981" if bias == "BULLISH" else ("#ef4444" if bias == "BEARISH" else "#94a3b8")
-            phase_bg = "#1e293b"
-            phase_color = "#94a3b8"
-            if phase == "SWEEP_DETECTED":
-                phase_bg = "#854d0e"
-                phase_color = "#fef08a"
-            elif phase == "FVG_PENDING":
-                phase_bg = "#581c87"
-                phase_color = "#e9d5ff"
-            elif phase == "IN_POSITION":
-                phase_bg = "#064e3b"
-                phase_color = "#6ee7b7"
-
-            mp_str = fmt_price(d.get("mark_price"))
-            bsl_str = fmt_price(d.get("bsl"))
-            ssl_str = fmt_price(d.get("ssl"))
-            ema_str = fmt_price(d.get("macro_200_ema"))
-
-            t24 = tickers_24h.get(sym, 0.0)
-            t24_col = "#10b981" if t24 >= 0 else "#ef4444"
-            t24_badge = f'<span style="font-size:11px; font-weight:700; color:{t24_col};">{t24:+,.2f}% (24h)</span>'
-
-            pos_info_html = ""
-            if phase == "IN_POSITION":
-                pnl = d.get("floating_pnl", 0.0)
-                pnl_pct = d.get("floating_pnl_pct", 0.0)
-                pnl_color = "#10b981" if pnl >= 0 else "#ef4444"
-                pos_info_html = f"""
-                <div style="margin-top:12px; padding:10px; background:#0f172a; border-radius:8px; border:1px solid #1e293b;">
-                  <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-                    <span style="font-weight:700; color:{'#10b981' if d.get('position_side')=='LONG' else '#ef4444'}">{d.get('position_side')} {d.get('position_size')}</span>
-                    <span style="font-weight:700; color:{pnl_color};">${pnl:+,.2f} ({pnl_pct:+,.2f}%)</span>
-                  </div>
-                  <div style="font-size:12px; color:#94a3b8;">
-                    Entry: ${fmt_price(d.get('entry_price'))} | SL: ${fmt_price(d.get('stop_loss'))} | TP: ${fmt_price(d.get('take_profit'))}
-                  </div>
-                </div>"""
-            elif phase == "FVG_PENDING":
-                pos_info_html = f"""
-                <div style="margin-top:12px; padding:10px; background:#2e1065; border-radius:8px; border:1px solid #581c87;">
-                  <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-                    <span style="font-weight:700; color:#e9d5ff;">LIMIT {d.get('pending_side')} ARMED</span>
-                    <span style="font-weight:700; color:#cbd5e1;">@ ${fmt_price(d.get('pending_ep'))}</span>
-                  </div>
-                  <div style="font-size:12px; color:#c084fc;">
-                    SL: ${fmt_price(d.get('pending_sl'))} | TP: ${fmt_price(d.get('pending_tp'))} (Expires 60m)
-                  </div>
-                </div>"""
-
-            card = f"""
-            <div class="card">
-              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                <div style="display:flex; align-items:center; gap:10px;">
-                  {icon}
-                  <div>
-                    <span style="font-size:16px; font-weight:800; color:#f8fafc;">{sym}</span>
-                    <div style="font-size:12px; color:#94a3b8;">${mp_str} &nbsp; {t24_badge}</div>
-                  </div>
-                </div>
-                <div style="text-align:right;">
-                  <span class="badge" style="background:{phase_bg}; color:{phase_color};">{phase}</span>
-                  <div style="margin-top:4px;"><span class="badge" style="background:#0f172a; border:1px solid {bias_color}; color:{bias_color}; font-size:10px;">4H {bias}</span></div>
-                </div>
-              </div>
-
-              <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:12px; background:#0b0f19; padding:8px; border-radius:6px;">
-                <div><span style="color:#64748b;">4H 200-EMA:</span> <span style="color:#cbd5e1; font-weight:600;">${ema_str}</span></div>
-                <div><span style="color:#64748b;">15m ATR:</span> <span style="color:#cbd5e1; font-weight:600;">${fmt_price(d.get('current_atr'))}</span></div>
-                <div><span style="color:#64748b;">BSL (High):</span> <span style="color:#cbd5e1; font-weight:600;">${bsl_str}</span></div>
-                <div><span style="color:#64748b;">SSL (Low):</span> <span style="color:#cbd5e1; font-weight:600;">${ssl_str}</span></div>
-              </div>
-              {pos_info_html}
-            </div>"""
-            cards_html.append(card)
-
-        # Build Internal Bot Trades Table Rows
-        bot_rows = []
-        for t in reversed(bot_trades):
-            net = t.get("net_pnl", 0.0)
-            net_col = "#10b981" if net >= 0 else "#ef4444"
-            side_col = "#10b981" if t.get("side") == "LONG" else "#ef4444"
-            row = f"""
-            <tr>
-              <td>{t.get('timestamp')}</td>
-              <td><strong>{t.get('symbol')}</strong></td>
-              <td style="color:{side_col}; font-weight:700;">{t.get('side')}</td>
-              <td>${fmt_price(t.get('entry_price'))}</td>
-              <td>${fmt_price(t.get('exit_price'))}</td>
-              <td>{t.get('qty')}</td>
-              <td style="color:{net_col}; font-weight:700;">${net:+,.2f}</td>
-              <td><span class="badge" style="background:#1e293b; color:#cbd5e1;">{t.get('exit_reason')}</span></td>
-              <td>{t.get('duration_minutes', 0):.1f}m</td>
-            </tr>"""
-            bot_rows.append(row)
-        bot_tbody = "".join(bot_rows) if bot_rows else '<tr><td colspan="9" style="text-align:center; color:#64748b; padding:20px;">No internal AMD trades recorded yet.</td></tr>'
-
-        # Build Exchange Bybit Trades Table Rows
-        exch_rows = []
-        for t in exch_trades:
-            pnl = t.get("closed_pnl", 0.0)
-            pnl_col = "#10b981" if pnl >= 0 else "#ef4444"
-            side_col = "#10b981" if "buy" in t.get("side", "").lower() else "#ef4444"
-            row = f"""
-            <tr>
-              <td>{t.get('timestamp')}</td>
-              <td><strong>{t.get('symbol')}</strong></td>
-              <td style="color:{side_col}; font-weight:700;">{t.get('side')}</td>
-              <td>${fmt_price(t.get('entry_price'))}</td>
-              <td>${fmt_price(t.get('exit_price'))}</td>
-              <td>{t.get('qty')}</td>
-              <td style="color:{pnl_col}; font-weight:700;">${pnl:+,.2f}</td>
-              <td><span class="badge" style="background:#1e293b; color:#cbd5e1;">Exchange Fill</span></td>
-              <td>---</td>
-            </tr>"""
-            exch_rows.append(row)
-        exch_tbody = "".join(exch_rows) if exch_rows else '<tr><td colspan="9" style="text-align:center; color:#64748b; padding:20px;">No exchange trades found.</td></tr>'
-
-        # Read last 30 log lines
-        log_lines = []
-        if os.path.exists(LOG_FILE):
-            try:
-                with open(LOG_FILE, "r", encoding="utf-8") as f:
-                    log_lines = [line.rstrip("\r\n") for line in f][-30:]
-            except Exception:
-                pass
-        sanitized_logs = "\n".join(sanitize_logs(l) for l in log_lines)
+        host_only = self.headers.get('Host', 'localhost').split(':')[0]
 
         html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -613,15 +747,16 @@ class AMDTelemetryHandler(BaseHTTPRequestHandler):
     .stat-label {{ font-size:12px; color:var(--text-muted); font-weight:600; text-transform:uppercase; }}
     .stat-val {{ font-size:20px; font-weight:800; color:#fff; margin-top:4px; }}
     .grid-cards {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:16px; margin-bottom:24px; }}
-    .card {{ background:var(--card-bg); border:1px solid var(--card-border); border-radius:12px; padding:16px; transition:transform 0.15s ease, border-color 0.15s ease; }}
-    .card:hover {{ border-color:#3b82f6; transform:translateY(-2px); }}
+    .card {{ background:var(--card-bg); border:1px solid var(--card-border); border-radius:12px; padding:16px; transition:border-color 0.15s ease; }}
+    .card:hover {{ border-color:#3b82f6; }}
     .section-title {{ font-size:16px; font-weight:700; color:#cbd5e1; margin-bottom:12px; display:flex; align-items:center; justify-content:space-between; }}
     .tab-btn {{ background:#1e293b; color:#94a3b8; border:1px solid #334155; padding:6px 14px; border-radius:6px; cursor:pointer; font-weight:600; font-size:12px; transition:all 0.15s ease; }}
     .tab-btn.active {{ background:#3b82f6; color:#fff; border-color:#3b82f6; }}
     table {{ width:100%; border-collapse:collapse; font-size:13px; text-align:left; }}
     th {{ background:#0b111e; color:var(--text-muted); padding:10px 12px; font-weight:600; border-bottom:1px solid var(--card-border); }}
     td {{ padding:10px 12px; border-bottom:1px solid #141f32; color:#cbd5e1; }}
-    .terminal {{ background:#05080f; border:1px solid var(--card-border); border-radius:10px; padding:14px; font-family:'JetBrains Mono', monospace; font-size:12px; height:220px; overflow-y:auto; color:#a5b4fc; white-space:pre-wrap; line-height:1.6; }}
+    .terminal {{ background:#05080f; border:1px solid var(--card-border); border-radius:10px; padding:14px; font-family:'JetBrains Mono', monospace; font-size:12px; height:240px; overflow-y:auto; color:#a5b4fc; white-space:pre-wrap; line-height:1.6; }}
+    .ws-indicator {{ display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight:700; color:#10b981; padding:2px 8px; border-radius:12px; background:#064e3b; border:1px solid #059669; }}
   </style>
 </head>
 <body>
@@ -633,43 +768,27 @@ class AMDTelemetryHandler(BaseHTTPRequestHandler):
         <div class="title">[AMD] Bybit Macro AMD + FVG Bot Telemetry</div>
         <span class="badge" style="background:{env_bg}; color:{env_color}; border:1px solid {env_color};">{env_badge}</span>
         <span class="badge" style="background:#1e1b4b; color:#c7d2fe; border:1px solid #4338ca;">PORT 8081</span>
+        <span class="ws-indicator" id="ws-badge">⚡ LIVE SOCKET</span>
       </div>
       <div style="font-size:13px; color:#94a3b8;">
-        Uptime: <strong style="color:#f8fafc;">{uptime_str}</strong> | 
-        <a href="http://{self.headers.get('Host', 'localhost').split(':')[0]}:8080/dashboard?password={PASSWORD}" target="_blank" style="color:#a78bfa; text-decoration:none; margin-left:8px; font-weight:600;">📊 Trend Bot (Port 8080)</a> | 
+        Uptime: <strong style="color:#f8fafc;" id="uptime-val">{payload['uptime']}</strong> | 
+        <a href="http://{host_only}:8080/dashboard?password={PASSWORD}" target="_blank" style="color:#a78bfa; text-decoration:none; margin-left:8px; font-weight:600;">📊 Trend Bot (Port 8080)</a> | 
         <a href="/api/ai-summary?password={PASSWORD}" target="_blank" style="color:#60a5fa; text-decoration:none; margin-left:8px; font-weight:600;">🤖 AI Summary</a>
       </div>
     </div>
 
-    <!-- Stats Bar -->
-    <div class="stats-bar">
-      <div class="stat-card">
-        <div class="stat-label">Total Equity</div>
-        <div class="stat-val">${equity:,.2f}</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Wallet Balance</div>
-        <div class="stat-val">${wallet:,.2f}</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Available Margin</div>
-        <div class="stat-val">${avail:,.2f}</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Realized PnL</div>
-        <div class="stat-val" style="color:{'#10b981' if tot_realized_pnl>=0 else '#ef4444'};">
-          ${tot_realized_pnl:+,.2f}
-        </div>
-      </div>
+    <!-- Stats Bar (Updated live via Socket) -->
+    <div class="stats-bar" id="stats-container">
+      {payload['stats_html']}
     </div>
 
-    <!-- Active AMD Strategy Pair Cards -->
+    <!-- Active AMD Strategy Pair Cards (Updated live via Socket) -->
     <div class="section-title">
       <span>Market Engines (15m AMD + 4H 200-EMA Bias)</span>
       <span style="font-size:12px; color:#64748b;">BTC, DOGE, SOL, ETH</span>
     </div>
-    <div class="grid-cards">
-      {"".join(cards_html)}
+    <div class="grid-cards" id="markets-container">
+      {payload['markets_html']}
     </div>
 
     <!-- Closed Trades Section with Tabs -->
@@ -698,8 +817,8 @@ class AMDTelemetryHandler(BaseHTTPRequestHandler):
               <th>Duration</th>
             </tr>
           </thead>
-          <tbody>
-            {bot_tbody}
+          <tbody id="bot-trades-body">
+            {payload['bot_trades_html']}
           </tbody>
         </table>
       </div>
@@ -720,16 +839,16 @@ class AMDTelemetryHandler(BaseHTTPRequestHandler):
               <th>Duration</th>
             </tr>
           </thead>
-          <tbody>
-            {exch_tbody}
+          <tbody id="exch-trades-body">
+            {payload['exch_trades_html']}
           </tbody>
         </table>
       </div>
     </div>
 
-    <!-- Live Sanitized Terminal Logs -->
+    <!-- Live Sanitized Terminal Logs (Updated live via Socket) -->
     <div class="section-title">Live Engine Logs (amd_bot.log)</div>
-    <div class="terminal" id="term">{sanitized_logs}</div>
+    <div class="terminal" id="term">{payload['logs']}</div>
   </div>
 
   <script>
@@ -751,12 +870,113 @@ class AMDTelemetryHandler(BaseHTTPRequestHandler):
       }}
     }}
 
+    // Real-Time Socket Stream Handler (NO FULL PAGE RELOAD)
+    let ws = null;
+    let fallbackTimer = null;
+
+    function applyLiveUpdate(d) {{
+      if (!d) return;
+      if (d.uptime) {{
+        const upEl = document.getElementById('uptime-val');
+        if (upEl) upEl.textContent = d.uptime;
+      }}
+      if (d.stats_html) {{
+        const sEl = document.getElementById('stats-container');
+        if (sEl) sEl.innerHTML = d.stats_html;
+      }}
+      if (d.markets_html) {{
+        const mEl = document.getElementById('markets-container');
+        if (mEl) mEl.innerHTML = d.markets_html;
+      }}
+      if (d.bot_trades_html) {{
+        const btEl = document.getElementById('bot-trades-body');
+        if (btEl) btEl.innerHTML = d.bot_trades_html;
+      }}
+      if (d.exch_trades_html) {{
+        const etEl = document.getElementById('exch-trades-body');
+        if (etEl) etEl.innerHTML = d.exch_trades_html;
+      }}
+      if (d.logs) {{
+        const term = document.getElementById('term');
+        if (term) {{
+          const isAtBottom = (term.scrollHeight - term.clientHeight) <= (term.scrollTop + 60);
+          term.textContent = d.logs;
+          if (isAtBottom) term.scrollTop = term.scrollHeight;
+        }}
+      }}
+    }}
+
+    function connectTelemetryWS() {{
+      const protocol = (location.protocol === 'https:') ? 'wss://' : 'ws://';
+      const wsUrl = protocol + location.host + '/ws' + location.search;
+
+      try {{
+        ws = new WebSocket(wsUrl);
+      }} catch (e) {{
+        startPollingFallback();
+        return;
+      }}
+
+      ws.onopen = () => {{
+        console.log('[WS] Connected to live AMD telemetry stream');
+        const badge = document.getElementById('ws-badge');
+        if (badge) {{
+          badge.textContent = '⚡ LIVE SOCKET';
+          badge.style.background = '#064e3b';
+          badge.style.color = '#6ee7b7';
+          badge.style.borderColor = '#059669';
+        }}
+        if (fallbackTimer) {{
+          clearInterval(fallbackTimer);
+          fallbackTimer = null;
+        }}
+      }};
+
+      ws.onmessage = (evt) => {{
+        try {{
+          const data = JSON.parse(evt.data);
+          applyLiveUpdate(data);
+        }} catch (err) {{
+          console.error('[WS] Parse error:', err);
+        }}
+      }};
+
+      ws.onerror = () => {{
+        try {{ ws.close(); }} catch(e) {{}}
+      }};
+
+      ws.onclose = () => {{
+        console.log('[WS] Disconnected. Reconnecting...');
+        const badge = document.getElementById('ws-badge');
+        if (badge) {{
+          badge.textContent = '🔄 RECONNECTING';
+          badge.style.background = '#854d0e';
+          badge.style.color = '#fef08a';
+          badge.style.borderColor = '#ca8a04';
+        }}
+        startPollingFallback();
+        setTimeout(connectTelemetryWS, 2500);
+      }};
+    }}
+
+    function startPollingFallback() {{
+      if (fallbackTimer) return;
+      fallbackTimer = setInterval(async () => {{
+        try {{
+          const res = await fetch('/api/live-status' + location.search);
+          if (res.ok) {{
+            const data = await res.json();
+            applyLiveUpdate(data);
+          }}
+        }} catch (e) {{}}
+      }}, 3000);
+    }}
+
+    // Initial terminal scroll & socket connection
     const term = document.getElementById('term');
     if (term) term.scrollTop = term.scrollHeight;
 
-    setTimeout(() => {{
-      window.location.reload();
-    }}, 4000);
+    connectTelemetryWS();
   </script>
 </body>
 </html>"""

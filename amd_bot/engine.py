@@ -74,6 +74,7 @@ class PairAMDState:
         # Live Prices
         self.mark_price: float = 0.0
         self.last_price: float = 0.0
+        self.last_tick_time: float = time.time()
 
         # Candle Data: List of dicts {open, high, low, close, volume, timestamp}
         self.candles_15m: List[Dict[str, float]] = []
@@ -125,6 +126,8 @@ class PairAMDState:
             "symbol": self.symbol,
             "mark_price": self.mark_price,
             "last_price": self.last_price,
+            "last_tick_time": round(self.last_tick_time, 2),
+            "seconds_since_tick": round(time.time() - self.last_tick_time, 1),
             "phase": self.phase,
             "macro_bias": self.macro_bias,
             "macro_200_ema": self.macro_200_ema,
@@ -184,6 +187,7 @@ class AMDEngine:
         # Threading lock
         self._lock = threading.Lock()
         self.ws: Optional[WebSocket] = None
+        self.last_ws_msg_time: float = time.time()
 
         # Closed Trades Memory
         self.closed_trades: List[Dict[str, Any]] = []
@@ -249,34 +253,125 @@ class AMDEngine:
         if curr_c > 0:
             pair.range_width_pct = (pair.bsl - pair.ssl) / curr_c
 
-    # -- WebSocket Connection --------------------------------------------------
+    # -- WebSocket Connection & Dual-Feed Synchronization ---------------------
+
+    def _connect_websocket(self) -> None:
+        """Create or recreate Bybit Linear WebSocket connection and subscribe."""
+        try:
+            if self.ws:
+                try:
+                    self.ws.exit()
+                except Exception:
+                    pass
+            self.ws = WebSocket(
+                testnet=TESTNET,
+                channel_type="linear",
+            )
+            for sym in self.symbols:
+                self.ws.kline_stream(interval=15, symbol=sym, callback=self._handle_kline_15m)
+                self.ws.kline_stream(interval=240, symbol=sym, callback=self._handle_kline_4h)
+                self.ws.ticker_stream(symbol=sym, callback=self._handle_ticker)
+            self.last_ws_msg_time = time.time()
+            logger.info(f"Subscribed WebSocket to 15m, 240m klines and tickers for {', '.join(self.symbols)}.")
+        except Exception as e:
+            logger.error(f"WebSocket connection error: {e}")
+
+    def _ws_watchdog_loop(self) -> None:
+        """Watchdog to ensure WebSocket connection never stays dead silently."""
+        while self.is_running:
+            time.sleep(10.0)
+            now = time.time()
+            silence_duration = now - self.last_ws_msg_time
+            if silence_duration > 30.0:
+                logger.warning(
+                    f"[WATCHDOG] WebSocket silent for {silence_duration:.1f}s. Reconnecting Bybit WebSocket..."
+                )
+                self._connect_websocket()
+
+    def _rest_sync_loop(self) -> None:
+        """Dual-Feed REST Synchronization running every 10 seconds.
+        Ensures mark prices never freeze and closed klines are never missed,
+        even if WebSocket disconnects or drops packets."""
+        while self.is_running:
+            time.sleep(10.0)
+            for sym in self.symbols:
+                try:
+                    pair = self.pairs.get(sym)
+                    if not pair:
+                        continue
+
+                    # 1. Sync live ticker via REST
+                    t = self.client.get_ticker(sym)
+                    if t and (t["mark_price"] > 0 or t["last_price"] > 0):
+                        with self._lock:
+                            if t["mark_price"] > 0:
+                                pair.mark_price = t["mark_price"]
+                            if t["last_price"] > 0:
+                                pair.last_price = t["last_price"]
+                            pair.last_tick_time = time.time()
+                            if pair.phase == "IN_POSITION" and pair.entry_price > 0 and pair.position_size > 0:
+                                cur_px = pair.mark_price if pair.mark_price > 0 else pair.last_price
+                                if pair.position_side == "LONG":
+                                    pair.floating_pnl = (cur_px - pair.entry_price) * pair.position_size
+                                    pair.floating_pnl_pct = ((cur_px - pair.entry_price) / pair.entry_price) * 100.0
+                                elif pair.position_side == "SHORT":
+                                    pair.floating_pnl = (pair.entry_price - cur_px) * pair.position_size
+                                    pair.floating_pnl_pct = ((pair.entry_price - cur_px) / pair.entry_price) * 100.0
+
+                    # 2. Sync latest closed 15m kline
+                    k15 = self.client.get_recent_closed_kline(sym, "15")
+                    if k15 and pair.candles_15m:
+                        with self._lock:
+                            last_ts = pair.candles_15m[-1]["timestamp"]
+                            if k15["timestamp"] > last_ts:
+                                pair.candles_15m.append(k15)
+                                if len(pair.candles_15m) > 100:
+                                    pair.candles_15m.pop(0)
+                                self._update_15m_range(pair)
+                                self._evaluate_amd_transition(pair)
+                                logger.info(
+                                    f"[{sym}] Processed 15m candle close via REST sync: Close={k15['close']:.2f} "
+                                    f"| Phase: {pair.phase}"
+                                )
+
+                    # 3. Sync latest closed 4H kline
+                    k4h = self.client.get_recent_closed_kline(sym, "240")
+                    if k4h and pair.candles_4h:
+                        with self._lock:
+                            last_4h_ts = pair.candles_4h[-1]["timestamp"]
+                            if k4h["timestamp"] > last_4h_ts:
+                                pair.candles_4h.append(k4h)
+                                if len(pair.candles_4h) > 250:
+                                    pair.candles_4h.pop(0)
+                                closes = [c["close"] for c in pair.candles_4h]
+                                pair.macro_200_ema = calc_ema(closes, 200)
+                                if not math.isnan(pair.macro_200_ema):
+                                    pair.macro_bias = "BULLISH" if closes[-1] > pair.macro_200_ema else "BEARISH"
+                                    logger.info(
+                                        f"[{sym}] 4H Bar Confirmed via REST sync. Close: {closes[-1]:.2f} "
+                                        f"| 200-EMA: {pair.macro_200_ema:.2f} | Bias: {pair.macro_bias}"
+                                    )
+                except Exception as e:
+                    logger.debug(f"[{sym}] REST sync error: {e}")
 
     def start(self) -> None:
-        """Start Bybit V5 Public WebSocket listener."""
+        """Start Bybit V5 Public WebSocket listener, Watchdog, REST sync, and Maintenance Loop."""
         self.is_running = True
+        self.last_ws_msg_time = time.time()
         logger.info(f"Connecting to Bybit Linear WebSocket ({WS_LINEAR_URL})...")
+        self._connect_websocket()
 
-        self.ws = WebSocket(
-            testnet=TESTNET,
-            channel_type="linear",
-        )
-
-        for sym in self.symbols:
-            # Subscribe to 15m kline
-            self.ws.kline_stream(interval=15, symbol=sym, callback=self._handle_kline_15m)
-            # Subscribe to 4H kline
-            self.ws.kline_stream(interval=240, symbol=sym, callback=self._handle_kline_4h)
-            # Subscribe to ticker for live mark price
-            self.ws.ticker_stream(symbol=sym, callback=self._handle_ticker)
-
-        logger.info(f"Subscribed to 15m, 240m klines and tickers for {', '.join(self.symbols)}.")
-
+        # Start Watchdog thread
+        threading.Thread(target=self._ws_watchdog_loop, daemon=True).start()
+        # Start Dual-Feed REST sync thread
+        threading.Thread(target=self._rest_sync_loop, daemon=True).start()
         # Start periodic state dump and pending order timeout thread
         threading.Thread(target=self._maintenance_loop, daemon=True).start()
 
     # -- WebSocket Callbacks ---------------------------------------------------
 
     def _handle_ticker(self, message: Dict[str, Any]) -> None:
+        self.last_ws_msg_time = time.time()
         topic = message.get("topic", "")
         data = message.get("data", {})
         sym = data.get("symbol")
@@ -285,6 +380,7 @@ class AMDEngine:
 
         with self._lock:
             pair = self.pairs[sym]
+            pair.last_tick_time = time.time()
             mp = data.get("markPrice")
             lp = data.get("lastPrice")
             if mp:
@@ -303,6 +399,7 @@ class AMDEngine:
                     pair.floating_pnl_pct = ((pair.entry_price - cur_px) / pair.entry_price) * 100.0
 
     def _handle_kline_4h(self, message: Dict[str, Any]) -> None:
+        self.last_ws_msg_time = time.time()
         data = message.get("data", [])
         if not data:
             return
@@ -313,6 +410,7 @@ class AMDEngine:
 
         with self._lock:
             pair = self.pairs[sym]
+            pair.last_tick_time = time.time()
             c_data = {
                 "open": float(k.get("open", 0)),
                 "high": float(k.get("high", 0)),
@@ -333,6 +431,7 @@ class AMDEngine:
                     logger.info(f"[{sym}] 4H Bar Confirmed. Close: {closes[-1]:.2f} | 200-EMA: {pair.macro_200_ema:.2f} | Bias: {pair.macro_bias}")
 
     def _handle_kline_15m(self, message: Dict[str, Any]) -> None:
+        self.last_ws_msg_time = time.time()
         data = message.get("data", [])
         if not data:
             return
@@ -343,6 +442,7 @@ class AMDEngine:
 
         with self._lock:
             pair = self.pairs[sym]
+            pair.last_tick_time = time.time()
             c_data = {
                 "open": float(k.get("open", 0)),
                 "high": float(k.get("high", 0)),

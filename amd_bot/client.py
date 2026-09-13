@@ -324,6 +324,43 @@ class AMDBitService:
             logger.debug(f"[{symbol}] get_closed_pnl error: {e}")
         return []
 
+    def get_ticker(self, symbol: str) -> Optional[Dict[str, float]]:
+        """Fetch latest ticker via REST API."""
+        try:
+            res = self.session.get_tickers(category="linear", symbol=symbol)
+            if res.get("retCode") == 0:
+                tickers = res.get("result", {}).get("list", [])
+                if tickers:
+                    t = tickers[0]
+                    return {
+                        "mark_price": float(t.get("markPrice", 0) or 0),
+                        "last_price": float(t.get("lastPrice", 0) or 0),
+                    }
+        except Exception as e:
+            logger.debug(f"[{symbol}] get_ticker REST error: {e}")
+        return None
+
+    def get_recent_closed_kline(self, symbol: str, interval: str = "15") -> Optional[Dict[str, Any]]:
+        """Fetch latest confirmed closed kline via REST API."""
+        try:
+            res = self.session.get_kline(category="linear", symbol=symbol, interval=interval, limit=3)
+            if res.get("retCode") == 0:
+                raw_list = res.get("result", {}).get("list", [])
+                if len(raw_list) >= 2:
+                    # Index 0 is currently forming; index 1 is the latest confirmed closed candle
+                    k = raw_list[1]
+                    return {
+                        "timestamp": int(k[0]),
+                        "open": float(k[1]),
+                        "high": float(k[2]),
+                        "low": float(k[3]),
+                        "close": float(k[4]),
+                        "volume": float(k[5]),
+                    }
+        except Exception as e:
+            logger.debug(f"[{symbol}] get_recent_closed_kline REST error: {e}")
+        return None
+
     # -- Reconciliation & Account Data -----------------------------------------
 
     def get_open_positions(self) -> List[Dict[str, Any]]:

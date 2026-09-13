@@ -101,7 +101,8 @@ def main():
                     st = engine.pairs.get(s)
                     if st:
                         px_fmt = f"{st.mark_price:,.5f}" if st.mark_price < 1.0 else f"{st.mark_price:,.2f}"
-                        parts.append(f"{s}: ${px_fmt} [{st.phase}]")
+                        age = f"{int(time.time() - st.last_tick_time)}s ago" if st.last_tick_time > 0 else "init"
+                        parts.append(f"{s}: ${px_fmt} [{st.phase}, {age}]")
                 if parts:
                     logger.info(f"[HEARTBEAT] Scanning | " + " | ".join(parts))
         except KeyboardInterrupt:

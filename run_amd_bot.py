@@ -89,9 +89,19 @@ def main():
 
     logger.info("AMD Bot active. Listening for 15m/4H klines and market sweeps...")
 
+    scan_count = 0
     while engine.is_running:
         try:
-            time.sleep(1.0)
+            time.sleep(5.0)
+            scan_count += 1
+            # Every 60 seconds (12 x 5s), emit a high-signal heartbeat log
+            if scan_count % 12 == 0:
+                parts = []
+                for s in symbols:
+                    st = engine.states.get(s)
+                    if st:
+                        parts.append(f"{s}: ${st.mark_price:.2f} ({st.phase})")
+                logger.info(f"[HEARTBEAT] Listening | " + " | ".join(parts))
         except KeyboardInterrupt:
             handle_shutdown(None, None)
 

@@ -98,10 +98,12 @@ def main():
             if scan_count % 12 == 0:
                 parts = []
                 for s in symbols:
-                    st = engine.states.get(s)
+                    st = engine.pairs.get(s)
                     if st:
-                        parts.append(f"{s}: ${st.mark_price:.2f} ({st.phase})")
-                logger.info(f"[HEARTBEAT] Listening | " + " | ".join(parts))
+                        px_fmt = f"{st.mark_price:,.5f}" if st.mark_price < 1.0 else f"{st.mark_price:,.2f}"
+                        parts.append(f"{s}: ${px_fmt} [{st.phase}]")
+                if parts:
+                    logger.info(f"[HEARTBEAT] Scanning | " + " | ".join(parts))
         except KeyboardInterrupt:
             handle_shutdown(None, None)
 

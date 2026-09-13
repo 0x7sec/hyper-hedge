@@ -105,6 +105,7 @@ class PairAMDState:
         self.pending_order_link_id: Optional[str] = None
         self.pending_side: Optional[str] = None
         self.pending_ep: float = 0.0
+        self.pending_order_qty: float = 0.0
         self.pending_sl: float = 0.0
         self.pending_tp: float = 0.0
         self.pending_expire_time: float = 0.0
@@ -139,6 +140,7 @@ class PairAMDState:
             "pending_order_id": self.pending_order_id,
             "pending_side": self.pending_side,
             "pending_ep": self.pending_ep,
+            "pending_order_qty": self.pending_order_qty,
             "pending_sl": self.pending_sl,
             "pending_tp": self.pending_tp,
             "position_side": self.position_side,
@@ -233,13 +235,14 @@ class AMDEngine:
         self._dump_state_atomic()
 
     def _update_15m_range(self, pair: PairAMDState) -> None:
-        """Update 15m ATR and Accumulation range (BSL & SSL)."""
+        """Update 15m ATR and Accumulation range (BSL & SSL) from prior consolidation bars."""
         lookback = pair.profile.range_lookback
         if len(pair.candles_15m) < lookback + 14:
             return
 
         pair.current_atr = calc_atr(pair.candles_15m, 14)
-        recent = pair.candles_15m[-lookback:]
+        # Prior 16 bars excluding the current candle that is being evaluated for sweep
+        recent = pair.candles_15m[-(lookback + 1):-1]
         pair.bsl = max(c["high"] for c in recent)
         pair.ssl = min(c["low"] for c in recent)
         curr_c = pair.candles_15m[-1]["close"]
@@ -441,6 +444,7 @@ class AMDEngine:
                                     pair.phase = "FVG_PENDING"
                                     pair.pending_side = "BUY"
                                     pair.pending_ep = pending_ep
+                                    pair.pending_order_qty = order_qty
                                     pair.pending_sl = pending_sl
                                     pair.pending_tp = pending_tp
                                     pair.pending_order_id = res.get("orderId")
@@ -488,6 +492,7 @@ class AMDEngine:
                                     pair.phase = "FVG_PENDING"
                                     pair.pending_side = "SELL"
                                     pair.pending_ep = pending_ep
+                                    pair.pending_order_qty = order_qty
                                     pair.pending_sl = pending_sl
                                     pair.pending_tp = pending_tp
                                     pair.pending_order_id = res.get("orderId")
@@ -523,45 +528,71 @@ class AMDEngine:
                                 pair.phase = "ACCUMULATING"
                                 pair.pending_order_id = None
                                 pair.pending_side = None
+                                pair.pending_order_qty = 0.0
                                 continue
 
-                            # Check Fill via current market price crossing limit price
+                            # Check Fill via Bybit order query (if live) or simulation price crossing
                             cur_px = pair.mark_price if pair.mark_price > 0 else pair.last_price
-                            if cur_px > 0:
-                                filled = False
+                            filled = False
+                            actual_ep = pair.pending_ep
+                            actual_qty = pair.pending_order_qty if pair.pending_order_qty > 0 else pair.profile.base_size
+
+                            if not self.client.is_dry_run and (pair.pending_order_id or pair.pending_order_link_id):
+                                ord_status = self.client.get_order_status(sym, pair.pending_order_id, pair.pending_order_link_id)
+                                if ord_status:
+                                    st_str = ord_status.get("orderStatus", "")
+                                    if st_str == "Filled":
+                                        filled = True
+                                        avg_p = float(ord_status.get("avgPrice", 0) or 0)
+                                        if avg_p > 0:
+                                            actual_ep = avg_p
+                                        cum_q = float(ord_status.get("cumExecQty", 0) or 0)
+                                        if cum_q > 0:
+                                            actual_qty = cum_q
+                                    elif st_str in ["Cancelled", "Deactivated", "Rejected"]:
+                                        logger.info(f"[{sym}] Pending order {st_str} on Bybit. Resetting...")
+                                        pair.phase = "ACCUMULATING"
+                                        pair.pending_order_id = None
+                                        pair.pending_side = None
+                                        pair.pending_order_qty = 0.0
+                                        continue
+
+                            # Fallback Fill Check via mark price touch
+                            if not filled and cur_px > 0:
                                 if pair.pending_side == "BUY" and cur_px <= pair.pending_ep:
                                     filled = True
                                 elif pair.pending_side == "SELL" and cur_px >= pair.pending_ep:
                                     filled = True
 
-                                if filled:
-                                    logger.info(f"[{sym}] FVG LIMIT ORDER FILLED @ {pair.pending_ep:.2f}!")
-                                    pair.phase = "IN_POSITION"
-                                    pair.position_side = "LONG" if pair.pending_side == "BUY" else "SHORT"
-                                    pair.entry_price = pair.pending_ep
-                                    pair.entry_time = now
-                                    pair.position_size = pair.profile.base_size
-                                    pair.stop_loss = pair.pending_sl
-                                    pair.take_profit = pair.pending_tp
-                                    pair.pending_order_id = None
-                                    pair.pending_side = None
+                            if filled:
+                                logger.info(f"[{sym}] FVG LIMIT ORDER FILLED: {actual_qty} @ {actual_ep:.2f}!")
+                                pair.phase = "IN_POSITION"
+                                pair.position_side = "LONG" if pair.pending_side == "BUY" else "SHORT"
+                                pair.entry_price = actual_ep
+                                pair.entry_time = now
+                                pair.position_size = actual_qty
+                                pair.stop_loss = pair.pending_sl
+                                pair.take_profit = pair.pending_tp
+                                pair.pending_order_id = None
+                                pair.pending_side = None
+                                pair.pending_order_qty = 0.0
 
-                                    # Arm Exchange Structural SL
-                                    self.client.set_structural_stop_loss(sym, pair.position_side, pair.stop_loss)
-                                    # Arm Exchange Limit TP
-                                    close_side = "Sell" if pair.position_side == "LONG" else "Buy"
-                                    tp_link = f"tp_{sym.lower()}_{int(now)}"
-                                    self.client.place_take_profit_order(
-                                        sym, close_side, pair.position_size, pair.take_profit, tp_link
-                                    )
+                                # Arm Exchange Structural SL
+                                self.client.set_structural_stop_loss(sym, pair.position_side, pair.stop_loss)
+                                # Arm Exchange Limit TP
+                                close_side = "Sell" if pair.position_side == "LONG" else "Buy"
+                                tp_link = f"tp_{sym.lower()}_{int(now)}"
+                                self.client.place_take_profit_order(
+                                    sym, close_side, pair.position_size, pair.take_profit, tp_link
+                                )
 
                         # 2. Check Active Position SL / TP Hits
                         elif pair.phase == "IN_POSITION":
                             cur_px = pair.mark_price if pair.mark_price > 0 else pair.last_price
-                            if cur_px > 0:
-                                sl_hit = False
-                                tp_hit = False
+                            sl_hit = False
+                            tp_hit = False
 
+                            if cur_px > 0:
                                 if pair.position_side == "LONG":
                                     if cur_px <= pair.stop_loss:
                                         sl_hit = True
@@ -573,19 +604,44 @@ class AMDEngine:
                                     elif cur_px <= pair.take_profit:
                                         tp_hit = True
 
-                                if sl_hit or tp_hit:
-                                    exit_reason = "TP" if tp_hit else "SL"
-                                    exit_px = pair.take_profit if tp_hit else pair.stop_loss
-                                    logger.info(f"[{sym}] POSITION CLOSED via {exit_reason} @ {exit_px:.2f}!")
+                            # If live, also check if position was closed on Bybit via exchange order
+                            if not self.client.is_dry_run and not (sl_hit or tp_hit):
+                                open_pos = self.client.get_open_positions()
+                                sym_pos = next((p for p in open_pos if p.get("symbol") == sym and float(p.get("size", 0) or 0) > 0), None)
+                                if not sym_pos:
+                                    closed_records = self.client.get_closed_pnl(sym, limit=1)
+                                    exit_px = pair.take_profit
+                                    exit_reason = "EXCHANGE_CLOSE"
+                                    if closed_records:
+                                        rec = closed_records[0]
+                                        exit_px = float(rec.get("avgExitPrice", 0) or exit_px)
+                                        pnl_val = float(rec.get("closedPnl", 0) or 0)
+                                        exit_reason = "TP" if pnl_val >= 0 else "SL"
+                                    logger.info(f"[{sym}] Exchange position closed via {exit_reason} @ {exit_px:.2f}!")
                                     self._record_closed_trade(pair, exit_px, exit_reason)
-
-                                    # Reset pair state
                                     pair.phase = "ACCUMULATING"
                                     pair.position_side = None
                                     pair.entry_price = 0.0
                                     pair.position_size = 0.0
                                     pair.floating_pnl = 0.0
                                     pair.floating_pnl_pct = 0.0
+                                    continue
+
+                            if sl_hit or tp_hit:
+                                exit_reason = "TP" if tp_hit else "SL"
+                                exit_px = pair.take_profit if tp_hit else pair.stop_loss
+                                logger.info(f"[{sym}] POSITION CLOSED via {exit_reason} @ {exit_px:.2f}!")
+                                if not self.client.is_dry_run and exit_reason == "SL":
+                                    self.client.close_position_market(sym, pair.position_side, pair.position_size)
+                                self._record_closed_trade(pair, exit_px, exit_reason)
+
+                                # Reset pair state
+                                pair.phase = "ACCUMULATING"
+                                pair.position_side = None
+                                pair.entry_price = 0.0
+                                pair.position_size = 0.0
+                                pair.floating_pnl = 0.0
+                                pair.floating_pnl_pct = 0.0
 
                     self._dump_state_atomic()
             except Exception as e:

@@ -288,6 +288,42 @@ class AMDBitService:
             logger.error(f"[{symbol}] Emergency close failed: {e}")
             return False
 
+    def get_order_status(self, symbol: str, order_id: Optional[str] = None, order_link_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Query order status from Bybit open orders or order history."""
+        if self.is_dry_run:
+            return None
+        try:
+            kwargs: Dict[str, Any] = {"category": "linear", "symbol": symbol}
+            if order_id:
+                kwargs["orderId"] = order_id
+            if order_link_id:
+                kwargs["orderLinkId"] = order_link_id
+            res = self.session.get_open_orders(**kwargs)
+            if res.get("retCode") == 0:
+                orders = res.get("result", {}).get("list", [])
+                if orders:
+                    return orders[0]
+            res_hist = self.session.get_order_history(**kwargs)
+            if res_hist.get("retCode") == 0:
+                hist_orders = res_hist.get("result", {}).get("list", [])
+                if hist_orders:
+                    return hist_orders[0]
+        except Exception as e:
+            logger.debug(f"[{symbol}] get_order_status error: {e}")
+        return None
+
+    def get_closed_pnl(self, symbol: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """Fetch latest closed PnL records for reconciliation."""
+        if self.is_dry_run:
+            return []
+        try:
+            res = self.session.get_closed_pnl(category="linear", symbol=symbol, limit=limit)
+            if res.get("retCode") == 0:
+                return res.get("result", {}).get("list", [])
+        except Exception as e:
+            logger.debug(f"[{symbol}] get_closed_pnl error: {e}")
+        return []
+
     # -- Reconciliation & Account Data -----------------------------------------
 
     def get_open_positions(self) -> List[Dict[str, Any]]:

@@ -18,13 +18,13 @@ echo "=== [3/3] Restarting Services (Stopping Trend Bot, Restarting Telemetry + 
 if [ "$(id -u)" -eq 0 ]; then
   systemctl stop bybit-bot || true
   systemctl disable bybit-bot || true
-  systemctl restart bybit-telemetry amd-bot amd-telemetry
-  systemctl status bybit-telemetry amd-bot amd-telemetry --no-pager
+  systemctl restart bybit-telemetry amd-bot amd-telemetry bybit-discount || true
+  systemctl status bybit-telemetry amd-bot amd-telemetry bybit-discount --no-pager
 else
   sudo systemctl stop bybit-bot || true
   sudo systemctl disable bybit-bot || true
-  sudo systemctl restart bybit-telemetry amd-bot amd-telemetry
-  sudo systemctl status bybit-telemetry amd-bot amd-telemetry --no-pager
+  sudo systemctl restart bybit-telemetry amd-bot amd-telemetry bybit-discount || true
+  sudo systemctl status bybit-telemetry amd-bot amd-telemetry bybit-discount --no-pager
 fi
 
 echo "=== Update complete! Trend bot stopped, AMD bot & Telemetry active ==="

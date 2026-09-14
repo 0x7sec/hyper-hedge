@@ -687,6 +687,8 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             self._handle_api_candles(qs)
         elif parsed.path == "/api/tickers":
             self._handle_api_tickers()
+        elif parsed.path == "/api/discount-status":
+            self._handle_api_discount_status()
         else:
             self.send_error(404, "Not Found")
 
@@ -872,6 +874,19 @@ class TelemetryHandler(BaseHTTPRequestHandler):
     def _handle_api_tickers(self):
         tickers = fetch_24h_tickers()
         self._send_json({"tickers": tickers})
+
+    def _handle_api_discount_status(self):
+        discount_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "discount_state.json"))
+        if os.path.exists(discount_path):
+            try:
+                with open(discount_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                self._send_json(data)
+                return
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+                return
+        self._send_json({"status": "OFFLINE", "message": "discount_state.json not found"}, 404)
 
     # ==========================================================================
     # WEBSOCKET STREAMING
@@ -1360,11 +1375,81 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             )
         pnl_by_sym_html = "".join(pnl_badges) if pnl_badges else '<span style="color:#64748b;">No closed trade fills yet</span>'
 
+        # Discount Suite State (if active)
+        discount_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "discount_state.json"))
+        discount_suite_html = ""
+        if os.path.exists(discount_path):
+            try:
+                with open(discount_path, "r", encoding="utf-8") as f:
+                    d_data = json.load(f)
+                opt_s = d_data.get("options_engine", {})
+                spot_s = d_data.get("spot_engine", {})
+                neut_s = d_data.get("neutral_engine", {})
+
+                discount_suite_html = f"""
+                <div class="card" style="margin-bottom:20px; border:1px solid rgba(56,189,248,0.25); background:linear-gradient(180deg, #0a1324 0%, #070d19 100%); padding:18px;">
+                  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; border-bottom:1px solid #1e293b; padding-bottom:10px;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                      <span style="font-size:15px; font-weight:700; color:#38bdf8;">⚡ Bybit UTA Discount Buy Suite</span>
+                      <span style="font-size:11px; color:#94a3b8; background:#1e293b; padding:2px 8px; border-radius:4px;">Strict $1,000 Cap Per Engine ($3,000 Total)</span>
+                    </div>
+                    <span class="status-pill" style="border-color:#10b981; color:#10b981; font-size:10px;">SUITE ACTIVE</span>
+                  </div>
+                  <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:14px;">
+                    <!-- Engine 1 -->
+                    <div style="background:#070d19; padding:12px 14px; border-radius:8px; border:1px solid #1e293b;">
+                      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                        <span style="font-weight:700; color:#f8fafc; font-size:12px;">1. Options Put Underwriter</span>
+                        <span class="badge {'long' if opt_s.get('status')=='CONTRACT_ACTIVE' else 'event'}">{opt_s.get('status','IDLE')}</span>
+                      </div>
+                      <div style="font-size:11.5px; color:#94a3b8; line-height:1.6;">
+                        Budget: <b style="color:#f8fafc;">${opt_s.get('allocated_capital', 1000):,.2f}</b><br>
+                        Balance: <b style="color:#38bdf8;">${opt_s.get('current_capital', 1000):,.2f}</b><br>
+                        Realized PnL: <b style="color:{'#10b981' if opt_s.get('total_realized_pnl',0)>=0 else '#ef4444'};">${opt_s.get('total_realized_pnl',0):+.2f}</b><br>
+                        Cycles: <b>{opt_s.get('profitable_cycles',0)}/{opt_s.get('total_cycles',0)} Wins</b><br>
+                        Active Strike: <b style="color:#f59e0b;">${opt_s.get('metrics',{}).get('current_put_strike','---')}</b>
+                      </div>
+                    </div>
+                    <!-- Engine 2 -->
+                    <div style="background:#070d19; padding:12px 14px; border-radius:8px; border:1px solid #1e293b;">
+                      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                        <span style="font-weight:700; color:#f8fafc; font-size:12px;">2. Spot Maker Accumulator</span>
+                        <span class="badge {'long' if 'RESTING' in str(spot_s.get('status')) else 'event'}">{spot_s.get('status','IDLE')}</span>
+                      </div>
+                      <div style="font-size:11.5px; color:#94a3b8; line-height:1.6;">
+                        Budget: <b style="color:#f8fafc;">${spot_s.get('allocated_capital', 1000):,.2f}</b><br>
+                        Balance: <b style="color:#38bdf8;">${spot_s.get('current_capital', 1000):,.2f}</b><br>
+                        Realized PnL: <b style="color:{'#10b981' if spot_s.get('total_realized_pnl',0)>=0 else '#ef4444'};">${spot_s.get('total_realized_pnl',0):+.2f}</b><br>
+                        Cycles: <b>{spot_s.get('profitable_cycles',0)}/{spot_s.get('total_cycles',0)} Wins</b><br>
+                        Resting Tranches: <b style="color:#38bdf8;">{len(spot_s.get('active_orders',[]))} Tranches</b>
+                      </div>
+                    </div>
+                    <!-- Engine 3 -->
+                    <div style="background:#070d19; padding:12px 14px; border-radius:8px; border:1px solid #1e293b;">
+                      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                        <span style="font-weight:700; color:#f8fafc; font-size:12px;">3. Delta-Neutral Harvester</span>
+                        <span class="badge {'primary' if 'HEDGED' in str(neut_s.get('status')) else 'event'}">{neut_s.get('status','IDLE')}</span>
+                      </div>
+                      <div style="font-size:11.5px; color:#94a3b8; line-height:1.6;">
+                        Budget: <b style="color:#f8fafc;">${neut_s.get('allocated_capital', 1000):,.2f}</b><br>
+                        Balance: <b style="color:#38bdf8;">${neut_s.get('current_capital', 1000):,.2f}</b><br>
+                        Realized PnL: <b style="color:{'#10b981' if neut_s.get('total_realized_pnl',0)>=0 else '#ef4444'};">${neut_s.get('total_realized_pnl',0):+.2f}</b><br>
+                        Locked Spread: <b style="color:#10b981;">+${neut_s.get('metrics',{}).get('locked_spread_usd',0):.2f}</b><br>
+                        Net Delta: <b style="color:#38bdf8;">Δ = {neut_s.get('metrics',{}).get('net_delta',0.0):.2f}</b>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                """
+            except Exception:
+                pass
+
         return {
             "status_color": status_color,
             "status_text": status_text,
             "brand_status_html": brand_status_html,
             "stats_grid_html": stats_grid_html,
+            "discount_suite_html": discount_suite_html,
             "pnl_by_symbol_html": pnl_by_sym_html,
             "markets_html": markets_html,
             "active_positions_html": active_positions_html,
@@ -2132,6 +2217,9 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         <span class="limit-pill safe">Alloc: <b>4 &times; $250 Margin</b></span>
       </div>
     </div>
+
+    <!-- Bybit Discount Buy Suite ($1k Each) -->
+    {d.get('discount_suite_html', '')}
 
     <!-- Stats Grid -->
     <div class="stats-grid" id="stats-grid">

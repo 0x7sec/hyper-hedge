@@ -224,6 +224,35 @@ SyslogIdentifier=amd-telemetry
 WantedBy=multi-user.target
 AMDTELEMSERVICE
 
+# 5. Autonomous Discount Buy Suite Engine ($1k Strict Per Engine)
+$SUDO tee /etc/systemd/system/bybit-discount.service > /dev/null << DISCOUNTSERVICE
+[Unit]
+Description=Bybit Autonomous Discount Buy Suite (3-Engine $1k Capital Enclosure)
+After=network.target network-online.target time-sync.target
+Wants=network-online.target time-sync.target
+
+[Service]
+Type=simple
+User=$CURRENT_USER
+Group=$CURRENT_GROUP
+WorkingDirectory=$APP_DIR
+EnvironmentFile=$APP_DIR/.env
+ExecStart=$APP_DIR/venv/bin/python run_discount_suite.py --engine all --live
+Restart=always
+RestartSec=10
+
+LimitNOFILE=65535
+TimeoutStopSec=30
+KillMode=process
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bybit-discount
+
+[Install]
+WantedBy=multi-user.target
+DISCOUNTSERVICE
+
 # Configure Logrotate for trade audit CSVs
 $SUDO tee /etc/logrotate.d/bybit-bot > /dev/null << LOGROT
 $APP_DIR/bybit_trades.csv $APP_DIR/amd_trades.csv {
@@ -255,8 +284,8 @@ echo "=== Pre-caching Historical Kline Data for Research Suite ==="
 $SUDO systemctl daemon-reload
 $SUDO systemctl stop bybit-bot || true
 $SUDO systemctl disable bybit-bot || true
-$SUDO systemctl enable bybit-telemetry amd-bot amd-telemetry
-$SUDO systemctl restart bybit-telemetry amd-bot amd-telemetry
+$SUDO systemctl enable bybit-telemetry amd-bot amd-telemetry bybit-discount
+$SUDO systemctl restart bybit-telemetry amd-bot amd-telemetry bybit-discount
 
 echo "=== [6/6] Verifying Daemon Status ==="
 sleep 3

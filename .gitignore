@@ -28,6 +28,7 @@ dist/
 *.pkl
 bot_state.json*
 amd_bot_state.json*
+discount_state.json*
 
 # ── Operating System & IDEs ───────────────────────────────────────────────────
 .DS_Store
@@ -42,3 +43,11 @@ scratch/*
 jesse/
 research_runs/
 .neurova/
+ChatExport_2026-09-14/
+bybit_signal_bot/
+run_signal_bot.py
+tests/test_signal_bot.py
+telegram-mcp/
+data/
+results/
+kucoin_earn_bot/

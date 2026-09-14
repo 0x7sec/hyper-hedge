@@ -65,6 +65,11 @@ class SuiteCoordinator:
             logger.warning(f"Could not retrieve spot price for {self.symbol}. Skipping tick.")
             return
 
+        opt_st = self.state_mgr.state.options_engine.status
+        spot_st = self.state_mgr.state.spot_engine.status
+        neut_st = self.state_mgr.state.neutral_engine.status
+        logger.info(f"[{self.symbol} ${spot_price:,.1f}] Engines: Opt={opt_st} | Spot={spot_st} | Neut={neut_st}")
+
         # 1. Options Engine Tick
         if self.options_engine:
             if self._check_circuit_breaker(self.state_mgr.state.options_engine):

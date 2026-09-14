@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-discount_telemetry_server.py — Dedicated Real-Time Dashboard & AI Telemetry Server
+discount_telemetry_server.py — Dedicated Real-Time WebSocket Dashboard & AI Telemetry Server
 for Bybit UTA Autonomous Discount Buy Suite (3x $1,000 Capital Enclosure).
-Runs on Port 8082 (Isolated from Port 8080 Trend and Port 8081 AMD servers).
+Runs on Port 8082 with RFC 6455 WebSocket streaming (zero page reload, instant live sync).
 """
 
 import os
@@ -10,6 +10,10 @@ import sys
 import json
 import re
 import time
+import struct
+import base64
+import hashlib
+import select
 import secrets
 import subprocess
 import logging
@@ -120,24 +124,38 @@ def read_discount_state() -> Dict[str, Any]:
     }
 
 
-def get_systemd_logs(lines: int = 40) -> List[str]:
-    """Fetch recent journalctl logs for bybit-discount."""
-    try:
-        cmd = ["journalctl", "-u", "bybit-discount", "-n", str(lines), "--no-pager"]
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=3)
-        if res.returncode == 0 and res.stdout.strip():
-            raw_lines = res.stdout.strip().split("\n")
-            return [sanitize_logs(l) for l in raw_lines[-lines:]]
-    except Exception:
-        pass
-    return ["No recent systemd logs available (or running outside VPS)."]
+def get_systemd_logs(lines: int = 50) -> List[str]:
+    """Fetch recent logs from discount_bot.log file or systemd journal."""
+    log_file = os.path.join(BASE_DIR, "discount_bot.log")
+    if os.path.exists(log_file):
+        try:
+            with open(log_file, "r", encoding="utf-8", errors="replace") as f:
+                content = f.readlines()
+                cleaned = [sanitize_logs(l.rstrip()) for l in content if l.strip()]
+                if cleaned:
+                    return cleaned[-lines:]
+        except Exception:
+            pass
+
+    if sys.platform != "win32":
+        try:
+            cmd = ["journalctl", "-u", "bybit-discount", "-n", str(lines), "--no-pager"]
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=3)
+            if res.returncode == 0 and res.stdout.strip():
+                raw_lines = [sanitize_logs(l.rstrip()) for l in res.stdout.strip().split("\n") if l.strip()]
+                if raw_lines:
+                    return raw_lines[-lines:]
+        except Exception:
+            pass
+
+    return ["System daemon active. Awaiting trade engine events..."]
 
 
 DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Bybit UTA Discount Buy Suite — Dashboard (Port __PORT__)</title>
+  <title>Bybit UTA Discount Buy Suite — Live Socket Dashboard (Port __PORT__)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
     :root {
@@ -192,11 +210,35 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
       border-radius: 4px;
       text-transform: uppercase;
       letter-spacing: 0.5px;
+      transition: all 0.2s ease;
     }
     .badge-sim { background: rgba(245, 158, 11, 0.15); color: var(--amber); border: 1px solid rgba(245, 158, 11, 0.3); }
     .badge-live { background: rgba(16, 185, 129, 0.15); color: var(--green); border: 1px solid rgba(16, 185, 129, 0.3); }
     .badge-active { background: rgba(56, 189, 248, 0.15); color: var(--accent); border: 1px solid rgba(56, 189, 248, 0.3); }
-    .badge-event { background: #1e293b; color: var(--text-muted); }
+    .badge-event { background: #1e293b; color: var(--text-muted); border: 1px solid #334155; }
+    .badge-socket {
+      background: #064e3b;
+      color: #6ee7b7;
+      border: 1px solid #059669;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .badge-socket::before {
+      content: "";
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #10b981;
+      box-shadow: 0 0 8px #10b981;
+      animation: pulse-dot 1.5s infinite;
+    }
+    @keyframes pulse-dot {
+      0% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.85); }
+      100% { opacity: 1; transform: scale(1); }
+    }
 
     .stats-grid {
       display: grid;
@@ -210,7 +252,9 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
       border-radius: 8px;
       padding: 16px 18px;
       box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+      transition: border-color 0.2s;
     }
+    .stat-box:hover { border-color: rgba(56, 189, 248, 0.4); }
     .stat-label { font-size: 11.5px; color: var(--text-muted); text-transform: uppercase; font-weight: 600; }
     .stat-value { font-size: 22px; font-weight: 700; margin-top: 4px; color: #fff; }
     .stat-sub { font-size: 11.5px; margin-top: 4px; color: var(--text-muted); }
@@ -231,6 +275,11 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
       display: flex;
       flex-direction: column;
       justify-content: space-between;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .engine-card:hover {
+      border-color: rgba(56, 189, 248, 0.3);
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4);
     }
     .engine-header {
       display: flex;
@@ -311,9 +360,9 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
         <p>Three Autonomous $1,000 Capital-Enclosed Engines &bull; Unified Trading Account V5 API</p>
       </div>
       <div class="badges">
-        <span class="badge __MODE_BADGE__">__MODE_STR__</span>
+        <span class="badge __MODE_BADGE__" id="mode-badge">__MODE_STR__</span>
         <span class="badge badge-active">PORT __PORT__</span>
-        <span class="badge badge-live" id="live-indicator">LIVE POLLING</span>
+        <span class="badge badge-socket" id="ws-badge">CONNECTING...</span>
       </div>
     </div>
 
@@ -366,15 +415,15 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
             </div>
             <div class="metric-row">
               <span class="metric-label">Win Rate / Cycles</span>
-              <span class="metric-val">__OPT_WINS__ / __OPT_CYCLES__ wins</span>
+              <span class="metric-val" id="opt-cycles">__OPT_WINS__ / __OPT_CYCLES__ wins</span>
             </div>
             <div class="metric-row">
               <span class="metric-label">Active Strike</span>
-              <span class="metric-val" style="color: var(--amber);">__OPT_STRIKE__</span>
+              <span class="metric-val" id="opt-strike" style="color: var(--amber);">__OPT_STRIKE__</span>
             </div>
             <div class="metric-row">
               <span class="metric-label">Locked Premium Yield</span>
-              <span class="metric-val" style="color: var(--green);">__OPT_PREMIUM__</span>
+              <span class="metric-val" id="opt-premium" style="color: var(--green);">__OPT_PREMIUM__</span>
             </div>
           </div>
         </div>
@@ -405,15 +454,15 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
             </div>
             <div class="metric-row">
               <span class="metric-label">Win Rate / Cycles</span>
-              <span class="metric-val">__SPOT_WINS__ / __SPOT_CYCLES__ wins</span>
+              <span class="metric-val" id="spot-cycles">__SPOT_WINS__ / __SPOT_CYCLES__ wins</span>
             </div>
             <div class="metric-row">
               <span class="metric-label">Active Resting Orders</span>
-              <span class="metric-val" style="color: var(--accent);">__SPOT_ORDERS__ Tranches</span>
+              <span class="metric-val" id="spot-orders" style="color: var(--accent);">__SPOT_ORDERS__ Tranches</span>
             </div>
             <div class="metric-row">
               <span class="metric-label">Nearest Discount Target</span>
-              <span class="metric-val" style="color: var(--amber);">__SPOT_NEAREST__</span>
+              <span class="metric-val" id="spot-nearest" style="color: var(--amber);">__SPOT_NEAREST__</span>
             </div>
           </div>
         </div>
@@ -444,15 +493,15 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
             </div>
             <div class="metric-row">
               <span class="metric-label">Win Rate / Cycles</span>
-              <span class="metric-val">__NEUT_WINS__ / __NEUT_CYCLES__ wins</span>
+              <span class="metric-val" id="neut-cycles">__NEUT_WINS__ / __NEUT_CYCLES__ wins</span>
             </div>
             <div class="metric-row">
               <span class="metric-label">Locked Spread Gain</span>
-              <span class="metric-val" style="color: var(--green);">__NEUT_SPREAD__</span>
+              <span class="metric-val" id="neut-spread" style="color: var(--green);">__NEUT_SPREAD__</span>
             </div>
             <div class="metric-row">
               <span class="metric-label">Net Directional Delta</span>
-              <span class="metric-val" style="color: var(--accent);">Δ = __NEUT_DELTA__</span>
+              <span class="metric-val" id="neut-delta" style="color: var(--accent);">Δ = __NEUT_DELTA__</span>
             </div>
           </div>
         </div>
@@ -462,9 +511,9 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
     <div class="log-card">
       <div class="log-header">
         <h4>System Journal & Audit Stream</h4>
-        <span style="font-size: 11px; color: var(--text-muted);" id="last-update">Updated just now</span>
+        <span style="font-size: 11px; color: var(--text-muted);" id="last-update">Socket streaming</span>
       </div>
-      <div class="terminal" id="terminal">Loading latest journal logs...</div>
+      <div class="terminal" id="terminal">__INITIAL_LOGS__</div>
     </div>
 
     <div class="footer">
@@ -478,48 +527,146 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
   </div>
 
   <script>
-    async function updateDashboard() {
-      try {
-        const res = await fetch('/api/status');
-        if (res.ok) {
-          const d = await res.json();
-          const opt = d.options_engine || {};
-          const spot = d.spot_engine || {};
-          const neut = d.neutral_engine || {};
+    let ws = null;
+    let fallbackTimer = null;
 
-          const totCap = (opt.current_capital || 1000) + (spot.current_capital || 1000) + (neut.current_capital || 1000);
-          const totPnl = (opt.total_realized_pnl || 0) + (spot.total_realized_pnl || 0) + (neut.total_realized_pnl || 0);
+    function applyLiveUpdate(d) {
+      if (!d) return;
 
-          document.getElementById('tot-cap').innerText = '$' + totCap.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-          const pnlEl = document.getElementById('tot-pnl');
-          pnlEl.innerText = (totPnl >= 0 ? '+' : '') + '$' + totPnl.toFixed(2);
-          pnlEl.style.color = totPnl >= 0 ? '#10b981' : '#ef4444';
+      const opt = d.options_engine || {};
+      const spot = d.spot_engine || {};
+      const neut = d.neutral_engine || {};
 
-          document.getElementById('opt-status').innerText = opt.status || 'IDLE';
-          document.getElementById('spot-status').innerText = spot.status || 'IDLE';
-          document.getElementById('neut-status').innerText = neut.status || 'IDLE';
+      const totCap = (opt.current_capital || 1000) + (spot.current_capital || 1000) + (neut.current_capital || 1000);
+      const totPnl = (opt.total_realized_pnl || 0) + (spot.total_realized_pnl || 0) + (neut.total_realized_pnl || 0);
+      const totCycles = (opt.total_cycles || 0) + (spot.total_cycles || 0) + (neut.total_cycles || 0);
+      const totWins = (opt.profitable_cycles || 0) + (spot.profitable_cycles || 0) + (neut.profitable_cycles || 0);
+      const winRate = totCycles > 0 ? ((totWins / totCycles) * 100).toFixed(1) + '%' : '0.0%';
 
-          document.getElementById('opt-cap').innerText = '$' + (opt.current_capital || 1000).toFixed(2);
-          document.getElementById('spot-cap').innerText = '$' + (spot.current_capital || 1000).toFixed(2);
-          document.getElementById('neut-cap').innerText = '$' + (neut.current_capital || 1000).toFixed(2);
+      // Overview
+      document.getElementById('tot-cap').innerText = '$' + totCap.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+      const pnlEl = document.getElementById('tot-pnl');
+      pnlEl.innerText = (totPnl >= 0 ? '+' : '') + '$' + totPnl.toFixed(2);
+      pnlEl.style.color = totPnl >= 0 ? '#10b981' : '#ef4444';
+      document.getElementById('pnl-pct').innerText = (totPnl / 3000.0 * 100).toFixed(2) + '% on Suite Capital';
+      document.getElementById('win-rate').innerText = winRate;
+      document.getElementById('cycle-count').innerText = `${totWins} Wins / ${totCycles} Closed Cycles`;
 
-          document.getElementById('last-update').innerText = 'Synced ' + new Date().toLocaleTimeString();
+      // Engine 1
+      const optStatEl = document.getElementById('opt-status');
+      optStatEl.innerText = opt.status || 'IDLE';
+      optStatEl.className = 'badge ' + (opt.status === 'CONTRACT_ACTIVE' ? 'badge-live' : 'badge-event');
+      document.getElementById('opt-cap').innerText = '$' + (opt.current_capital || 1000).toFixed(2);
+      const optPnlEl = document.getElementById('opt-pnl');
+      const optPnlVal = opt.total_realized_pnl || 0;
+      optPnlEl.innerText = (optPnlVal >= 0 ? '+' : '') + '$' + optPnlVal.toFixed(2);
+      optPnlEl.style.color = optPnlVal >= 0 ? '#10b981' : '#ef4444';
+      document.getElementById('opt-cycles').innerText = `${opt.profitable_cycles || 0} / ${opt.total_cycles || 0} wins`;
+      document.getElementById('opt-strike').innerText = '$' + (opt.metrics?.current_put_strike || '---');
+      document.getElementById('opt-premium').innerText = '+$' + (opt.metrics?.premium_locked_usd || 0).toFixed(2);
+
+      // Engine 2
+      const spotStatEl = document.getElementById('spot-status');
+      spotStatEl.innerText = spot.status || 'IDLE';
+      spotStatEl.className = 'badge ' + (String(spot.status).includes('RESTING') ? 'badge-live' : 'badge-event');
+      document.getElementById('spot-cap').innerText = '$' + (spot.current_capital || 1000).toFixed(2);
+      const spotPnlEl = document.getElementById('spot-pnl');
+      const spotPnlVal = spot.total_realized_pnl || 0;
+      spotPnlEl.innerText = (spotPnlVal >= 0 ? '+' : '') + '$' + spotPnlVal.toFixed(2);
+      spotPnlEl.style.color = spotPnlVal >= 0 ? '#10b981' : '#ef4444';
+      document.getElementById('spot-cycles').innerText = `${spot.profitable_cycles || 0} / ${spot.total_cycles || 0} wins`;
+      document.getElementById('spot-orders').innerText = `${(spot.active_orders || []).length} Tranches`;
+      document.getElementById('spot-nearest').innerText = '$' + (spot.metrics?.nearest_discount_px || '---');
+
+      // Engine 3
+      const neutStatEl = document.getElementById('neut-status');
+      neutStatEl.innerText = neut.status || 'IDLE';
+      neutStatEl.className = 'badge ' + (String(neut.status).includes('HEDGED') ? 'badge-active' : 'badge-event');
+      document.getElementById('neut-cap').innerText = '$' + (neut.current_capital || 1000).toFixed(2);
+      const neutPnlEl = document.getElementById('neut-pnl');
+      const neutPnlVal = neut.total_realized_pnl || 0;
+      neutPnlEl.innerText = (neutPnlVal >= 0 ? '+' : '') + '$' + neutPnlVal.toFixed(2);
+      neutPnlEl.style.color = neutPnlVal >= 0 ? '#10b981' : '#ef4444';
+      document.getElementById('neut-cycles').innerText = `${neut.profitable_cycles || 0} / ${neut.total_cycles || 0} wins`;
+      document.getElementById('neut-spread').innerText = '+$' + (neut.metrics?.locked_spread_usd || 0).toFixed(2);
+      document.getElementById('neut-delta').innerText = 'Δ = ' + (neut.metrics?.net_delta || 0.0).toFixed(4);
+
+      // Logs
+      if (d.logs && d.logs.length > 0) {
+        const term = document.getElementById('terminal');
+        const isScrolledToBottom = term.scrollHeight - term.clientHeight <= term.scrollTop + 30;
+        term.innerText = d.logs.join('\\n');
+        if (isScrolledToBottom) {
+          term.scrollTop = term.scrollHeight;
         }
-      } catch (e) {}
+      }
 
-      try {
-        const logRes = await fetch('/api/logs?lines=25');
-        if (logRes.ok) {
-          const lData = await logRes.json();
-          if (lData.logs && lData.logs.length > 0) {
-            document.getElementById('terminal').innerText = lData.logs.join('\\n');
-          }
-        }
-      } catch (e) {}
+      document.getElementById('last-update').innerText = 'Synced ' + new Date().toLocaleTimeString();
     }
 
-    setInterval(updateDashboard, 3000);
-    updateDashboard();
+    function connectWebSocket() {
+      const protocol = (location.protocol === 'https:') ? 'wss://' : 'ws://';
+      const wsUrl = protocol + location.host + '/ws' + location.search;
+
+      try {
+        ws = new WebSocket(wsUrl);
+      } catch (e) {
+        startPollingFallback();
+        return;
+      }
+
+      ws.onopen = () => {
+        console.log('[WS] Connected to live Discount Buy telemetry stream');
+        const badge = document.getElementById('ws-badge');
+        if (badge) {
+          badge.textContent = 'LIVE SOCKET';
+          badge.className = 'badge badge-socket';
+        }
+        if (fallbackTimer) {
+          clearInterval(fallbackTimer);
+          fallbackTimer = null;
+        }
+      };
+
+      ws.onmessage = (evt) => {
+        try {
+          const data = JSON.parse(evt.data);
+          applyLiveUpdate(data);
+        } catch (err) {
+          console.error('[WS] Parse error:', err);
+        }
+      };
+
+      ws.onerror = () => {
+        try { ws.close(); } catch(e) {}
+      };
+
+      ws.onclose = () => {
+        console.log('[WS] Disconnected. Reconnecting in 2.5s...');
+        const badge = document.getElementById('ws-badge');
+        if (badge) {
+          badge.textContent = 'RECONNECTING...';
+          badge.className = 'badge badge-sim';
+        }
+        startPollingFallback();
+        setTimeout(connectWebSocket, 2500);
+      };
+    }
+
+    function startPollingFallback() {
+      if (fallbackTimer) return;
+      fallbackTimer = setInterval(async () => {
+        try {
+          const res = await fetch('/api/live-status' + location.search);
+          if (res.ok) {
+            const data = await res.json();
+            applyLiveUpdate(data);
+          }
+        } catch (e) {}
+      }, 3000);
+    }
+
+    connectWebSocket();
   </script>
 </body>
 </html>
@@ -536,11 +683,11 @@ class DiscountTelemetryHandler(BaseHTTPRequestHandler):
         if cookie_header:
             for c in cookie_header.split(";"):
                 parts = c.strip().split("=", 1)
-                if len(parts) == 2 and parts[0] == "discount_session":
+                if len(parts) == 2 and parts[0] in ["discount_token", "discount_session", "amd_token", "hedge_token"]:
                     auth_cookie = parts[1]
                     break
 
-        if auth_cookie and auth_cookie in ACTIVE_SESSIONS:
+        if auth_cookie and auth_cookie == PASSWORD:
             return True
 
         req_pass = qs.get("password", [""])[0].strip()
@@ -548,6 +695,81 @@ class DiscountTelemetryHandler(BaseHTTPRequestHandler):
             return True
 
         return False
+
+    def _build_ws_frame(self, payload_bytes: bytes) -> bytes:
+        """RFC 6455 unmasked server-to-client text frame."""
+        length = len(payload_bytes)
+        if length <= 125:
+            header = struct.pack("!BB", 0x81, length)
+        elif length <= 65535:
+            header = struct.pack("!BBH", 0x81, 126, length)
+        else:
+            header = struct.pack("!BBQ", 0x81, 127, length)
+        return header + payload_bytes
+
+    def _handle_ws(self):
+        """Handle RFC 6455 WebSocket upgrade and stream live telemetry updates every 1.5s."""
+        key = self.headers.get("Sec-WebSocket-Key", "")
+        if not key:
+            self.send_error(400, "Bad Request: Missing Sec-WebSocket-Key")
+            return
+
+        guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+        accept_token = base64.b64encode(hashlib.sha1((key + guid).encode("utf-8")).digest()).decode("utf-8")
+
+        handshake = (
+            "HTTP/1.1 101 Switching Protocols\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Accept: {accept_token}\r\n"
+            "\r\n"
+        )
+        try:
+            self.connection.sendall(handshake.encode("utf-8"))
+        except Exception:
+            return
+
+        sock = self.connection
+        sock.setblocking(True)
+        sock.settimeout(1.5)
+
+        try:
+            while True:
+                payload = self._get_live_payload()
+                data_bytes = json.dumps(payload).encode("utf-8")
+                frame = self._build_ws_frame(data_bytes)
+                sock.sendall(frame)
+
+                # Wait 1.5s while responding to ping/close control frames
+                start_wait = time.time()
+                while time.time() - start_wait < 1.5:
+                    r, _, _ = select.select([sock], [], [], 0.3)
+                    if r:
+                        try:
+                            raw = sock.recv(4096)
+                            if not raw:
+                                return
+                            opcode = raw[0] & 0x0F
+                            if opcode == 0x8:  # Close
+                                sock.sendall(bytes([0x88, 0x00]))
+                                return
+                            elif opcode == 0x9:  # Ping -> Pong
+                                sock.sendall(bytes([0x8A, 0x00]))
+                        except (BlockingIOError, InterruptedError):
+                            continue
+                        except Exception:
+                            return
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        except Exception:
+            pass
+
+    def _get_live_payload(self) -> Dict[str, Any]:
+        """Generate real-time state payload for WebSocket or polling."""
+        state = read_discount_state()
+        logs = get_systemd_logs(35)
+        state["logs"] = logs
+        return state
 
     def _send_json(self, data: Any, status: int = 200):
         body = json.dumps(data, indent=2).encode("utf-8")
@@ -566,6 +788,13 @@ class DiscountTelemetryHandler(BaseHTTPRequestHandler):
             self._send_json({"status": "OK", "port": PORT, "time": datetime.now(timezone.utc).isoformat()})
             return
 
+        if parsed.path == "/ws":
+            if not self._is_authenticated(qs):
+                self.send_error(401, "Unauthorized")
+                return
+            self._handle_ws()
+            return
+
         if not self._is_authenticated(qs):
             if parsed.path in ["/dashboard", "/"]:
                 self._serve_login_page()
@@ -575,7 +804,7 @@ class DiscountTelemetryHandler(BaseHTTPRequestHandler):
 
         if parsed.path in ["/dashboard", "/"]:
             self._serve_dashboard()
-        elif parsed.path == "/api/status":
+        elif parsed.path in ["/api/status", "/api/live-status"]:
             self._handle_api_status()
         elif parsed.path == "/api/ai-summary":
             self._handle_api_ai_summary()
@@ -585,8 +814,8 @@ class DiscountTelemetryHandler(BaseHTTPRequestHandler):
             self.send_error(404, "Not Found")
 
     def _handle_api_status(self):
-        state = read_discount_state()
-        self._send_json(state)
+        payload = self._get_live_payload()
+        self._send_json(payload)
 
     def _handle_api_logs(self, qs: Dict[str, List[str]]):
         lines_count = int(qs.get("lines", [40])[0])
@@ -770,10 +999,15 @@ class DiscountTelemetryHandler(BaseHTTPRequestHandler):
         html = html.replace("__NEUT_SPREAD__", f"+${neut.get('metrics', {}).get('locked_spread_usd', 0):.2f}")
         html = html.replace("__NEUT_DELTA__", f"{neut.get('metrics', {}).get('net_delta', 0.0):.4f}")
 
+        # Embed initial logs
+        initial_logs = "\n".join(get_systemd_logs(35))
+        html = html.replace("__INITIAL_LOGS__", initial_logs)
+
         body = html.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Set-Cookie", f"discount_token={PASSWORD}; Path=/; HttpOnly")
         self.end_headers()
         self.wfile.write(body)
 
@@ -782,8 +1016,9 @@ def run_server():
     server_address = ("", PORT)
     httpd = ThreadingHTTPServer(server_address, DiscountTelemetryHandler)
     print(f"==============================================================================")
-    print(f"⚡ Bybit UTA Discount Buy Suite Telemetry & Dashboard Server ACTIVE")
+    print(f"⚡ Bybit UTA Discount Buy Suite WebSocket Telemetry Server ACTIVE")
     print(f"  • Port: {PORT}")
+    print(f"  • WebSocket Stream: ws://localhost:{PORT}/ws?password={PASSWORD}")
     print(f"  • Dashboard URL: http://localhost:{PORT}/dashboard?password={PASSWORD}")
     print(f"  • AI Summary API: http://localhost:{PORT}/api/ai-summary?password={PASSWORD}")
     print(f"==============================================================================")

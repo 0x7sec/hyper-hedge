@@ -237,7 +237,8 @@ User=$CURRENT_USER
 Group=$CURRENT_GROUP
 WorkingDirectory=$APP_DIR
 EnvironmentFile=$APP_DIR/.env
-ExecStart=$APP_DIR/venv/bin/python run_discount_suite.py --engine all --live
+Environment=PYTHONUNBUFFERED=1
+ExecStart=$APP_DIR/venv/bin/python -u run_discount_suite.py --engine all --live
 Restart=always
 RestartSec=10
 

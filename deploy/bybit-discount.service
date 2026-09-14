@@ -5,11 +5,12 @@ Wants=network-online.target time-sync.target
 
 [Service]
 Type=simple
-User=trader
-Group=trader
-WorkingDirectory=/home/trader/hyper_hedge_research
-EnvironmentFile=/home/trader/hyper_hedge_research/.env
-ExecStart=/home/trader/hyper_hedge_research/venv/bin/python run_discount_suite.py --engine all --live
+User=root
+Group=root
+WorkingDirectory=/root/hyper_hedge_research
+EnvironmentFile=/root/hyper_hedge_research/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/root/hyper_hedge_research/venv/bin/python -u run_discount_suite.py --engine all --live
 Restart=always
 RestartSec=10
 

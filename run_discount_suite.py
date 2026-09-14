@@ -15,6 +15,7 @@ Usage:
   python run_discount_suite.py --once                  # Executes a single step and exits
 """
 
+import os
 import sys
 import argparse
 import logging
@@ -28,6 +29,15 @@ if sys.platform == "win32":
     except Exception:
         pass
 
+# Ensure immediate line-buffered flushing
+try:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(line_buffering=True)
+except Exception:
+    pass
+
 from bybit_discount_bot.config import (
     BYBIT_API_KEY, BYBIT_API_SECRET, TESTNET,
     DEFAULT_SYMBOL_SPOT, MAX_CAPITAL_PER_ENGINE,
@@ -38,10 +48,19 @@ from bybit_discount_bot.coordinator import SuiteCoordinator
 
 console = Console(force_terminal=True, legacy_windows=False)
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+LOG_FILE = os.path.join(BASE_DIR, "discount_bot.log")
+
+handlers = [
+    logging.StreamHandler(sys.stdout),
+    logging.FileHandler(LOG_FILE, encoding="utf-8"),
+]
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
+    handlers=handlers,
+    force=True,
 )
 logger = logging.getLogger("discount_suite.main")
 

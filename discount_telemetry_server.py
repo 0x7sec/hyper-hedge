@@ -20,7 +20,7 @@ import logging
 from datetime import datetime, timezone
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
@@ -149,6 +149,53 @@ def get_systemd_logs(lines: int = 50) -> List[str]:
             pass
 
     return ["System daemon active. Awaiting trade engine events..."]
+
+
+def get_uptime_info(state: Dict[str, Any]) -> Tuple[int, str]:
+    """Compute uptime seconds and human-readable string."""
+    up_sec = 0
+    # 1. Check started_at in state
+    started_at = state.get("started_at") or state.get("session_start_iso")
+    if started_at:
+        try:
+            start_dt = datetime.fromisoformat(started_at)
+            now_dt = datetime.now(timezone.utc) if start_dt.tzinfo else datetime.now()
+            up_sec = max(0, int((now_dt - start_dt).total_seconds()))
+        except Exception:
+            pass
+
+    # 2. On Linux/Debian VPS, check systemd ActiveEnterTimestamp
+    if up_sec <= 0 and sys.platform != "win32":
+        try:
+            cmd = ["systemctl", "show", "bybit-discount", "--property=ActiveEnterTimestamp"]
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=2)
+            if res.returncode == 0 and res.stdout.strip():
+                val = res.stdout.strip().split("=", 1)[1].strip()
+                if val:
+                    cmd2 = ["date", "-d", val, "+%s"]
+                    res2 = subprocess.run(cmd2, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=2)
+                    if res2.returncode == 0 and res2.stdout.strip():
+                        start_ts = int(res2.stdout.strip())
+                        up_sec = max(0, int(time.time() - start_ts))
+        except Exception:
+            pass
+
+    # Format human-readable string
+    days = up_sec // 86400
+    hours = (up_sec % 86400) // 3600
+    mins = (up_sec % 3600) // 60
+    secs = up_sec % 60
+
+    if days > 0:
+        up_str = f"{days}d {hours}h {mins}m {secs}s"
+    elif hours > 0:
+        up_str = f"{hours}h {mins}m {secs}s"
+    elif mins > 0:
+        up_str = f"{mins}m {secs}s"
+    else:
+        up_str = f"{secs}s"
+
+    return up_sec, up_str
 
 
 DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
@@ -362,6 +409,7 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
       <div class="badges">
         <span class="badge __MODE_BADGE__" id="mode-badge">__MODE_STR__</span>
         <span class="badge badge-active">PORT __PORT__</span>
+        <span class="badge badge-event" style="color:#38bdf8; font-family:monospace; border-color:rgba(56,189,248,0.35);">⏱️ <span id="uptime-val">__UPTIME__</span></span>
         <span class="badge badge-socket" id="ws-badge">CONNECTING...</span>
       </div>
     </div>
@@ -383,9 +431,9 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
         <div class="stat-sub" id="cycle-count">__TOT_WINS__ Wins / __TOT_CYCLES__ Closed Cycles</div>
       </div>
       <div class="stat-box">
-        <div class="stat-label">Hardware Circuit Breaker</div>
-        <div class="stat-value" style="color: var(--green); font-size: 18px;">ARMED &bull; OK</div>
-        <div class="stat-sub">Max Drawdown Limit: 5.0%</div>
+        <div class="stat-label">System Uptime & Guard</div>
+        <div class="stat-value" style="color: var(--green); font-size: 19px; font-family: monospace;" id="uptime-box">__UPTIME__</div>
+        <div class="stat-sub">Circuit Breaker: ARMED &bull; Max DD 5.0%</div>
       </div>
     </div>
 
@@ -551,6 +599,13 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
       document.getElementById('pnl-pct').innerText = (totPnl / 3000.0 * 100).toFixed(2) + '% on Suite Capital';
       document.getElementById('win-rate').innerText = winRate;
       document.getElementById('cycle-count').innerText = `${totWins} Wins / ${totCycles} Closed Cycles`;
+
+      if (d.uptime) {
+        const upEl = document.getElementById('uptime-val');
+        if (upEl) upEl.innerText = d.uptime;
+        const upBox = document.getElementById('uptime-box');
+        if (upBox) upBox.innerText = d.uptime;
+      }
 
       // Engine 1
       const optStatEl = document.getElementById('opt-status');
@@ -768,7 +823,10 @@ class DiscountTelemetryHandler(BaseHTTPRequestHandler):
         """Generate real-time state payload for WebSocket or polling."""
         state = read_discount_state()
         logs = get_systemd_logs(35)
+        up_sec, up_str = get_uptime_info(state)
         state["logs"] = logs
+        state["uptime_seconds"] = up_sec
+        state["uptime"] = up_str
         return state
 
     def _send_json(self, data: Any, status: int = 200):
@@ -830,9 +888,11 @@ class DiscountTelemetryHandler(BaseHTTPRequestHandler):
 
         tot_cap = opt.get("current_capital", 1000) + spot.get("current_capital", 1000) + neut.get("current_capital", 1000)
         tot_pnl = opt.get("total_realized_pnl", 0) + spot.get("total_realized_pnl", 0) + neut.get("total_realized_pnl", 0)
+        up_sec, up_str = get_uptime_info(state)
 
         md = f"""# Bybit UTA Discount Buy Suite — AI Status Summary
 **Timestamp**: {datetime.now(timezone.utc).isoformat()}
+**Uptime**: {up_str} ({up_sec}s)
 **Mode**: {"SIMULATION / DRY-RUN" if state.get("dry_run", True) else "LIVE EXCHANGE EXECUTION"}
 **Total Suite Capital**: ${tot_cap:,.2f} / $3,000.00 | **Realized PnL**: ${tot_pnl:+.2f}
 
@@ -965,6 +1025,9 @@ class DiscountTelemetryHandler(BaseHTTPRequestHandler):
         html = html.replace("__WIN_RATE__", f"{win_rate:.1f}%")
         html = html.replace("__TOT_WINS__", str(tot_wins))
         html = html.replace("__TOT_CYCLES__", str(tot_cycles))
+
+        up_sec, up_str = get_uptime_info(state)
+        html = html.replace("__UPTIME__", up_str)
 
         # Engine 1
         html = html.replace("__OPT_STATUS__", opt.get("status", "IDLE"))

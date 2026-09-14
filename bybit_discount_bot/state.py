@@ -40,6 +40,7 @@ class SuiteState:
     spot_engine: EngineState
     neutral_engine: EngineState
     system_status: str = "RUNNING"
+    started_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 class DiscountStateManager:
@@ -59,6 +60,7 @@ class DiscountStateManager:
             spot_engine=EngineState(name="Spot Maker Accumulator"),
             neutral_engine=EngineState(name="Delta-Hedged Market-Neutral"),
             system_status="RUNNING",
+            started_at=now_str,
         )
 
     def _load_or_initialize(self) -> SuiteState:
@@ -73,6 +75,7 @@ class DiscountStateManager:
                     spot_engine=EngineState(**data.get("spot_engine", {})),
                     neutral_engine=EngineState(**data.get("neutral_engine", {})),
                     system_status=data.get("system_status", "RUNNING"),
+                    started_at=data.get("started_at") or data.get("session_start_iso") or datetime.now(timezone.utc).isoformat(),
                 )
             except Exception as e:
                 logger.warning(f"Could not load state file {self.file_path} ({e}), initializing fresh state.")

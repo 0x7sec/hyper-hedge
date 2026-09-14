@@ -224,10 +224,10 @@ SyslogIdentifier=amd-telemetry
 WantedBy=multi-user.target
 AMDTELEMSERVICE
 
-# 5. Autonomous Discount Buy Suite Engine ($1k Strict Per Engine)
+# 5. Autonomous Discount Buy Suite Engine (1000 USD Strict Per Engine)
 $SUDO tee /etc/systemd/system/bybit-discount.service > /dev/null << DISCOUNTSERVICE
 [Unit]
-Description=Bybit Autonomous Discount Buy Suite (3-Engine $1k Capital Enclosure)
+Description=Bybit Autonomous Discount Buy Suite (3-Engine 1000 USD Capital Enclosure)
 After=network.target network-online.target time-sync.target
 Wants=network-online.target time-sync.target
 
@@ -253,6 +253,35 @@ SyslogIdentifier=bybit-discount
 WantedBy=multi-user.target
 DISCOUNTSERVICE
 
+# 6. Discount Buy Telemetry & Dashboard Server (Port 8082)
+$SUDO tee /etc/systemd/system/discount-telemetry.service > /dev/null << DISTELEMSERVICE
+[Unit]
+Description=Bybit Discount Buy Telemetry & Dashboard Server (Port 8082)
+After=network.target network-online.target time-sync.target
+Wants=network-online.target time-sync.target
+
+[Service]
+Type=simple
+User=$CURRENT_USER
+Group=$CURRENT_GROUP
+WorkingDirectory=$APP_DIR
+EnvironmentFile=$APP_DIR/.env
+ExecStart=$APP_DIR/venv/bin/python discount_telemetry_server.py
+Restart=always
+RestartSec=5
+
+LimitNOFILE=65535
+TimeoutStopSec=15
+KillMode=process
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=discount-telemetry
+
+[Install]
+WantedBy=multi-user.target
+DISTELEMSERVICE
+
 # Configure Logrotate for trade audit CSVs
 $SUDO tee /etc/logrotate.d/bybit-bot > /dev/null << LOGROT
 $APP_DIR/bybit_trades.csv $APP_DIR/amd_trades.csv {
@@ -267,12 +296,13 @@ $APP_DIR/bybit_trades.csv $APP_DIR/amd_trades.csv {
 LOGROT
 $SUDO chmod 644 /etc/logrotate.d/bybit-bot
 
-# Open firewall ports 8080 and 8081 if UFW is active
+# Open firewall ports 8080, 8081, and 8082 if UFW is active
 if command -v ufw >/dev/null 2>&1; then
   if $SUDO ufw status | grep -q "Status: active"; then
-    echo "Opening ports 8080 and 8081 in UFW firewall..."
+    echo "Opening ports 8080, 8081, and 8082 in UFW firewall..."
     $SUDO ufw allow 8080/tcp comment 'Bybit Trend Telemetry API' || true
     $SUDO ufw allow 8081/tcp comment 'Bybit AMD Telemetry API' || true
+    $SUDO ufw allow 8082/tcp comment 'Bybit Discount Telemetry API' || true
   fi
 fi
 
@@ -284,48 +314,28 @@ echo "=== Pre-caching Historical Kline Data for Research Suite ==="
 $SUDO systemctl daemon-reload
 $SUDO systemctl stop bybit-bot || true
 $SUDO systemctl disable bybit-bot || true
-$SUDO systemctl enable bybit-telemetry amd-bot amd-telemetry bybit-discount
-$SUDO systemctl restart bybit-telemetry amd-bot amd-telemetry bybit-discount
+$SUDO systemctl enable bybit-telemetry amd-bot amd-telemetry bybit-discount discount-telemetry
+$SUDO systemctl restart bybit-telemetry amd-bot amd-telemetry bybit-discount discount-telemetry
 
 echo "=== [6/6] Verifying Daemon Status ==="
 sleep 3
-BOT_ACTIVE=false
-TELEM_ACTIVE=false
-AMD_BOT_ACTIVE=false
-AMD_TELEM_ACTIVE=false
-
-if $SUDO systemctl is-active --quiet bybit-bot; then
-  BOT_ACTIVE=true
-fi
-if $SUDO systemctl is-active --quiet bybit-telemetry; then
-  TELEM_ACTIVE=true
-fi
-if $SUDO systemctl is-active --quiet amd-bot; then
-  AMD_BOT_ACTIVE=true
-fi
-if $SUDO systemctl is-active --quiet amd-telemetry; then
-  AMD_TELEM_ACTIVE=true
-fi
 
 VPS_IP=$(curl -s -4 ifconfig.me 2>/dev/null || curl -s -4 icanhazip.com 2>/dev/null || echo "<vps-ip>")
 
-if [ "$TELEM_ACTIVE" = true ] && [ "$AMD_BOT_ACTIVE" = true ] && [ "$AMD_TELEM_ACTIVE" = true ]; then
-  echo "=============================================================================="
-  echo ">>> SUCCESS: Trend Bot STOPPED. AMD Bot & Telemetry ACTIVE on VPS! <<<"
-  echo "=============================================================================="
-  echo "  • bybit-bot.service      : STOPPED / DISABLED (Trend Runner Paused)"
-  echo "  • bybit-telemetry.service: ACTIVE (Port 8080)"
-  echo "  • amd-bot.service        : ACTIVE (Macro AMD + FVG Bot Engine)"
-  echo "  • amd-telemetry.service  : ACTIVE (AMD Dashboard on Port 8081)"
-  echo "------------------------------------------------------------------------------"
-  echo "📊 Trend Bot Dashboard   : http://${VPS_IP}:8080/dashboard?password=${FINAL_TPASS}"
-  echo "⚡ AMD Bot Dashboard     : http://${VPS_IP}:8081/dashboard?password=${FINAL_TPASS}"
-  echo "🤖 AMD AI API Endpoint   : http://${VPS_IP}:8081/api/ai-summary?password=${FINAL_TPASS}"
-  echo "🔑 Access Password       : ${FINAL_TPASS}"
-  echo "=============================================================================="
-  $SUDO systemctl status bybit-telemetry amd-bot amd-telemetry --no-pager
-else
-  echo "ERROR: One or more services failed to start."
-  $SUDO systemctl status bybit-telemetry amd-bot amd-telemetry --no-pager
-  exit 1
-fi
+echo "=============================================================================="
+echo ">>> SUCCESS: All Bots & Telemetry Services ACTIVE on VPS! <<<"
+echo "=============================================================================="
+echo "  • bybit-telemetry.service    : ACTIVE (Trend Dashboard on Port 8080)"
+echo "  • amd-bot.service            : ACTIVE (Macro AMD + FVG Bot Engine)"
+echo "  • amd-telemetry.service      : ACTIVE (AMD Dashboard on Port 8081)"
+echo "  • bybit-discount.service     : ACTIVE (Discount Buy 3-Engine Suite)"
+echo "  • discount-telemetry.service : ACTIVE (Discount Dashboard on Port 8082)"
+echo "------------------------------------------------------------------------------"
+echo "📊 Trend Bot Dashboard        : http://${VPS_IP}:8080/dashboard?password=${FINAL_TPASS}"
+echo "⚡ AMD Bot Dashboard          : http://${VPS_IP}:8081/dashboard?password=${FINAL_TPASS}"
+echo "🎯 Discount Buy Dashboard     : http://${VPS_IP}:8082/dashboard?password=${FINAL_TPASS}"
+echo "🤖 Discount AI Summary API    : http://${VPS_IP}:8082/api/ai-summary?password=${FINAL_TPASS}"
+echo "🔑 Access Password            : ${FINAL_TPASS}"
+echo "=============================================================================="
+$SUDO systemctl status bybit-telemetry amd-bot amd-telemetry bybit-discount discount-telemetry --no-pager
+

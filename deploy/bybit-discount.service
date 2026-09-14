@@ -1,5 +1,5 @@
 [Unit]
-Description=Bybit Autonomous Discount Buy Suite (3-Engine $1k Capital Enclosure)
+Description=Bybit Autonomous Discount Buy Suite (3-Engine 1000 USD Capital Enclosure)
 After=network.target network-online.target time-sync.target
 Wants=network-online.target time-sync.target
 

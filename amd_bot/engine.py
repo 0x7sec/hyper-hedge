@@ -96,6 +96,7 @@ class PairAMDState:
         self.sweep_dir: Optional[str] = None       # "BULLISH" or "BEARISH"
         self.sweep_extreme_px: float = 0.0
         self.sweep_time: float = 0.0
+        self.sweep_candle_ts: int = 0
         self.sweep_bar_idx: int = 0
 
         # Active FVG & Pending Order
@@ -137,6 +138,8 @@ class PairAMDState:
             "range_width_pct": round(self.range_width_pct * 100.0, 2),
             "sweep_dir": self.sweep_dir,
             "sweep_extreme_px": self.sweep_extreme_px,
+            "sweep_time": self.sweep_time,
+            "sweep_candle_ts": self.sweep_candle_ts,
             "fvg_top": self.fvg_top,
             "fvg_bottom": self.fvg_bottom,
             "fvg_ce": self.fvg_ce,
@@ -486,6 +489,7 @@ class AMDEngine:
                     pair.sweep_dir = "BULLISH"
                     pair.sweep_extreme_px = l
                     pair.sweep_time = time.time()
+                    pair.sweep_candle_ts = int(cur_candle.get("timestamp", 0))
                     pair.sweep_bar_idx = len(pair.candles_15m) - 1
                     logger.info(f"[{pair.symbol}] BULLISH SWEEP DETECTED! Low {l:.2f} < SSL {pair.ssl:.2f} | 4H Bias: BULLISH")
 
@@ -495,12 +499,17 @@ class AMDEngine:
                     pair.sweep_dir = "BEARISH"
                     pair.sweep_extreme_px = h
                     pair.sweep_time = time.time()
+                    pair.sweep_candle_ts = int(cur_candle.get("timestamp", 0))
                     pair.sweep_bar_idx = len(pair.candles_15m) - 1
                     logger.info(f"[{pair.symbol}] BEARISH SWEEP DETECTED! High {h:.2f} > BSL {pair.bsl:.2f} | 4H Bias: BEARISH")
 
         # Phase 3: Displacement & Fair Value Gap (FVG) Detection
         elif pair.phase == "SWEEP_DETECTED":
-            bars_since = (len(pair.candles_15m) - 1) - pair.sweep_bar_idx
+            if pair.sweep_candle_ts > 0:
+                bars_since = sum(1 for cand in pair.candles_15m if cand.get("timestamp", 0) > pair.sweep_candle_ts)
+            else:
+                bars_since = 4  # Stale or uninitialized sweep, force expiration
+
             if 1 <= bars_since <= 3:
                 # Displacement quality check
                 disp_range = prev_candle["high"] - prev_candle["low"]
@@ -606,9 +615,10 @@ class AMDEngine:
 
             elif bars_since > 3:
                 # Sweep expired without displacement
-                logger.info(f"[{pair.symbol}] Sweep timed out without valid displacement. Resetting to ACCUMULATING.")
+                logger.info(f"[{pair.symbol}] Sweep timed out without valid displacement ({bars_since} bars). Resetting to ACCUMULATING.")
                 pair.phase = "ACCUMULATING"
                 pair.sweep_dir = None
+                pair.sweep_candle_ts = 0
 
     # -- Maintenance Loop (Fill Checks, SL/TP Monitoring, Atomic Dump) ----------
 

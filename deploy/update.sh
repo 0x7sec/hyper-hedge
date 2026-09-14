@@ -14,13 +14,17 @@ git reset --hard origin/main
 echo "=== [2/3] Updating Python dependencies ==="
 ./venv/bin/pip install -r requirements.txt --upgrade -q
 
-echo "=== [3/3] Restarting Services (Bot + Telemetry) ==="
+echo "=== [3/3] Restarting Services (Stopping Trend Bot, Restarting Telemetry + AMD Bot) ==="
 if [ "$(id -u)" -eq 0 ]; then
-  systemctl restart bybit-bot bybit-telemetry
-  systemctl status bybit-bot bybit-telemetry --no-pager
+  systemctl stop bybit-bot || true
+  systemctl disable bybit-bot || true
+  systemctl restart bybit-telemetry amd-bot amd-telemetry
+  systemctl status bybit-telemetry amd-bot amd-telemetry --no-pager
 else
-  sudo systemctl restart bybit-bot bybit-telemetry
-  sudo systemctl status bybit-bot bybit-telemetry --no-pager
+  sudo systemctl stop bybit-bot || true
+  sudo systemctl disable bybit-bot || true
+  sudo systemctl restart bybit-telemetry amd-bot amd-telemetry
+  sudo systemctl status bybit-telemetry amd-bot amd-telemetry --no-pager
 fi
 
-echo "=== Update complete! Both services active ==="
+echo "=== Update complete! Trend bot stopped, AMD bot & Telemetry active ==="

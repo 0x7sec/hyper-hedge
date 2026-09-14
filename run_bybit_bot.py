@@ -29,6 +29,12 @@ logging.basicConfig(
 
 def main():
     try:
+        # Check if trend bot is paused/stopped
+        enabled = os.environ.get("TREND_BOT_ENABLED", "false").lower() in ["true", "1", "yes"]
+        if not enabled:
+            logging.info("Trend Bot is currently PAUSED / STOPPED (set TREND_BOT_ENABLED=true in .env to resume). Exiting.")
+            sys.exit(0)
+
         config = Config.from_args_and_env()
         service = BybitService(config)
         engine = BybitTradingEngine(service, config)

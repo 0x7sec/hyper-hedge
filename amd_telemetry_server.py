@@ -669,69 +669,80 @@ class AMDTelemetryHandler(BaseHTTPRequestHandler):
         self.wfile.write("\n".join(sanitized).encode("utf-8"))
 
     def _handle_api_ai_summary(self):
-        state = read_state()
-        bybit_acc = fetch_bybit_account_and_trades()
-        symbols_data = state.get("symbols", {})
+        try:
+            state = read_state()
+            bybit_acc = fetch_bybit_account_and_trades()
+            symbols_data = state.get("symbols", {})
 
-        up_sec = state.get("uptime_seconds", 0)
-        up_h = up_sec // 3600
-        up_m = (up_sec % 3600) // 60
+            up_sec = state.get("uptime_seconds", 0)
+            up_d = up_sec // 86400
+            up_h = (up_sec % 86400) // 3600
+            up_m = (up_sec % 3600) // 60
+            up_s = up_sec % 60
+            uptime_str = f"{up_d}d {up_h}h {up_m}m {up_s}s" if up_d > 0 else f"{up_h}h {up_m}m {up_s}s"
 
-        testnet = os.environ.get("TESTNET", "true").lower() in ["1", "true", "yes"]
-        env_label = "Bybit Testnet" if testnet else "Bybit Mainnet"
+            testnet = os.environ.get("TESTNET", "true").lower() in ["1", "true", "yes"]
+            env_label = "Bybit Testnet" if testnet else "Bybit Mainnet"
 
-        equity = bybit_acc.get("equity") or state.get("account", {}).get("equity", 0.0)
-        wallet = bybit_acc.get("wallet_balance") or state.get("account", {}).get("wallet_balance", 0.0)
-        realized_pnl = bybit_acc.get("total_realized_pnl") or state.get("account", {}).get("total_realized_pnl", 0.0)
+            equity = float(bybit_acc.get("equity") or state.get("account", {}).get("equity") or 0.0)
+            wallet = float(bybit_acc.get("wallet_balance") or state.get("account", {}).get("wallet_balance") or 0.0)
+            realized_pnl = float(bybit_acc.get("total_realized_pnl") or state.get("account", {}).get("total_realized_pnl") or 0.0)
 
-        conc = state.get("concurrency", {})
-        total_slots = conc.get("total_slots", 4)
-        active_slots = conc.get("active_slots", sum(1 for p in symbols_data.values() if p.get("phase") in ["IN_POSITION", "FVG_PENDING"]))
-        empty_slots = conc.get("empty_slots", max(0, total_slots - active_slots))
-        margin_in_use = conc.get("margin_in_use", active_slots * 250.0)
-        cash_reserve = conc.get("cash_reserve", max(0.0, 1000.0 - margin_in_use))
-        allocated_capital = conc.get("allocated_capital", 1000.0)
+            conc = state.get("concurrency", {})
+            total_slots = conc.get("total_slots", 4)
+            active_slots = conc.get("active_slots", sum(1 for p in symbols_data.values() if p.get("phase") in ["IN_POSITION", "FVG_PENDING"]))
+            empty_slots = conc.get("empty_slots", max(0, total_slots - active_slots))
+            margin_in_use = conc.get("margin_in_use", active_slots * 250.0)
+            cash_reserve = conc.get("cash_reserve", max(0.0, 1000.0 - margin_in_use))
+            allocated_capital = conc.get("allocated_capital", 1000.0)
 
-        md = []
-        md.append("# Bybit AMD + FVG Bot: AI Operational Summary")
-        md.append(f"**Strategy**: Macro-Filtered AMD + FVG (15m Execution + 4H 200-EMA Bias)")
-        md.append(f"**Generated**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')} | **Uptime**: {uptime_str} | **Environment**: {env_label}\n")
-        md.append("## 1. Capital Risk & Concurrency Slots")
-        md.append(f"- **Allocated Capital Bound**: ${allocated_capital:,.2f} USDT (Strict Cap)")
-        md.append(f"- **Concurrency Slots**: {active_slots} / {total_slots} Active ({empty_slots} Empty Slots)")
-        md.append(f"- **Margin In Use**: ${margin_in_use:,.2f} USDT | **Cash Reserve**: ${cash_reserve:,.2f} USDT")
-        md.append(f"- **Account Total Equity**: ${equity:,.2f} USDT | **Realized Net PnL**: ${realized_pnl:+,.2f} USDT\n")
+            md = []
+            md.append("# Bybit AMD + FVG Bot: AI Operational Summary")
+            md.append(f"**Strategy**: Macro-Filtered AMD + FVG (15m Execution + 4H 200-EMA Bias)")
+            md.append(f"**Generated**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')} | **Uptime**: {uptime_str} | **Environment**: {env_label}\n")
+            md.append("## 1. Capital Risk & Concurrency Slots")
+            md.append(f"- **Allocated Capital Bound**: ${allocated_capital:,.2f} USDT (Strict Cap)")
+            md.append(f"- **Concurrency Slots**: {active_slots} / {total_slots} Active ({empty_slots} Empty Slots)")
+            md.append(f"- **Margin In Use**: ${margin_in_use:,.2f} USDT | **Cash Reserve**: ${cash_reserve:,.2f} USDT")
+            md.append(f"- **Account Total Equity**: ${equity:,.2f} USDT | **Realized Net PnL**: ${realized_pnl:+,.2f} USDT\n")
 
-        md.append("## 2. Active Market Engines (15m AMD + 4H Bias)")
-        for sym, d in symbols_data.items():
-            md.append(f"### {sym}")
-            md.append(f"- **Phase**: `{d.get('phase', 'ACCUMULATING')}` | **Mark Price**: ${fmt_price(d.get('mark_price'))}")
-            md.append(f"- **4H Macro Bias**: `{d.get('macro_bias')}` (200-EMA: ${fmt_price(d.get('macro_200_ema'))})")
-            md.append(f"- **15m Range**: BSL: ${fmt_price(d.get('bsl'))} | SSL: ${fmt_price(d.get('ssl'))} (Width: {d.get('range_width_pct', 0)}%)")
-            if d.get("phase") == "FVG_PENDING":
-                md.append(f"- **Pending FVG Limit**: {d.get('pending_side')} @ ${fmt_price(d.get('pending_ep'))} | SL: ${fmt_price(d.get('pending_sl'))} | TP: ${fmt_price(d.get('pending_tp'))}")
-            elif d.get("phase") == "IN_POSITION":
-                md.append(f"- **Active Position**: {d.get('position_side')} {d.get('position_size')} @ ${fmt_price(d.get('entry_price'))}")
-                md.append(f"- **Floating PnL**: ${d.get('floating_pnl', 0.0):+,.2f} ({d.get('floating_pnl_pct', 0.0):+,.2f}%)")
-                md.append(f"- **Structural SL**: ${fmt_price(d.get('stop_loss'))} | **Target TP**: ${fmt_price(d.get('take_profit'))}")
-            md.append("")
+            md.append("## 2. Active Market Engines (15m AMD + 4H Bias)")
+            for sym, d in symbols_data.items():
+                md.append(f"### {sym}")
+                md.append(f"- **Phase**: `{d.get('phase', 'ACCUMULATING')}` | **Mark Price**: ${fmt_price(d.get('mark_price'))}")
+                md.append(f"- **4H Macro Bias**: `{d.get('macro_bias')}` (200-EMA: ${fmt_price(d.get('macro_200_ema'))})")
+                md.append(f"- **15m Range**: BSL: ${fmt_price(d.get('bsl'))} | SSL: ${fmt_price(d.get('ssl'))} (Width: {d.get('range_width_pct', 0)}%)")
+                if d.get("phase") == "FVG_PENDING":
+                    md.append(f"- **Pending FVG Limit**: {d.get('pending_side')} @ ${fmt_price(d.get('pending_ep'))} | SL: ${fmt_price(d.get('pending_sl'))} | TP: ${fmt_price(d.get('pending_tp'))}")
+                elif d.get("phase") == "IN_POSITION":
+                    md.append(f"- **Active Position**: {d.get('position_side')} {d.get('position_size')} @ ${fmt_price(d.get('entry_price'))}")
+                    md.append(f"- **Floating PnL**: ${d.get('floating_pnl', 0.0):+,.2f} ({d.get('floating_pnl_pct', 0.0):+,.2f}%)")
+                    md.append(f"- **Structural SL**: ${fmt_price(d.get('stop_loss'))} | **Target TP**: ${fmt_price(d.get('take_profit'))}")
+                md.append("")
 
-        md.append("## 3. Recent System Logs (Sanitized)")
-        lines = []
-        if os.path.exists(LOG_FILE):
-            try:
-                with open(LOG_FILE, "r", encoding="utf-8") as f:
-                    lines = [line.rstrip("\r\n") for line in f][-10:]
-            except Exception:
-                pass
-        for l in lines:
-            md.append(f"`{sanitize_logs(l)}`")
+            md.append("## 3. Recent System Logs (Sanitized)")
+            lines = []
+            if os.path.exists(LOG_FILE):
+                try:
+                    with open(LOG_FILE, "r", encoding="utf-8") as f:
+                        lines = [line.rstrip("\r\n") for line in f][-10:]
+                except Exception:
+                    pass
+            for l in lines:
+                md.append(f"`{sanitize_logs(l)}`")
 
-        output = "\n".join(md)
-        self.send_response(200)
-        self.send_header("Content-Type", "text/markdown; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(output.encode("utf-8"))
+            output = "\n".join(md)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/markdown; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(output.encode("utf-8"))
+        except Exception as e:
+            import traceback
+            err_msg = f"Error generating AI summary: {e}\n{traceback.format_exc()}"
+            self.send_response(500)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(err_msg.encode("utf-8"))
 
     # ==========================================================================
     # DASHBOARD HTML (WITH LIVE WEBSOCKET LISTENER)

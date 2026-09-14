@@ -85,6 +85,7 @@ MAX_CYCLES=0
 DRY_RUN=false
 LOG_CSV=bybit_trades.csv
 TELEMETRY_PORT=8080
+TREND_BOT_ENABLED=false
 ENVCONF
 
 echo "TELEMETRY_PASSWORD=${FINAL_TPASS}" >> .env
@@ -250,10 +251,12 @@ fi
 echo "=== Pre-caching Historical Kline Data for Research Suite ==="
 ./venv/bin/python scripts/download_latest_candles.py --symbols BTCUSDT,ETHUSDT,SOLUSDT,PAXGUSDT --bars 8000 || echo "Kline pre-caching completed or will fetch on demand."
 
-# Reload and restart daemons
+# Reload and restart daemons (Stopping and disabling bybit-bot as requested)
 $SUDO systemctl daemon-reload
-$SUDO systemctl enable bybit-bot bybit-telemetry amd-bot amd-telemetry
-$SUDO systemctl restart bybit-bot bybit-telemetry amd-bot amd-telemetry
+$SUDO systemctl stop bybit-bot || true
+$SUDO systemctl disable bybit-bot || true
+$SUDO systemctl enable bybit-telemetry amd-bot amd-telemetry
+$SUDO systemctl restart bybit-telemetry amd-bot amd-telemetry
 
 echo "=== [6/6] Verifying Daemon Status ==="
 sleep 3
@@ -277,12 +280,12 @@ fi
 
 VPS_IP=$(curl -s -4 ifconfig.me 2>/dev/null || curl -s -4 icanhazip.com 2>/dev/null || echo "<vps-ip>")
 
-if [ "$BOT_ACTIVE" = true ] && [ "$TELEM_ACTIVE" = true ] && [ "$AMD_BOT_ACTIVE" = true ] && [ "$AMD_TELEM_ACTIVE" = true ]; then
+if [ "$TELEM_ACTIVE" = true ] && [ "$AMD_BOT_ACTIVE" = true ] && [ "$AMD_TELEM_ACTIVE" = true ]; then
   echo "=============================================================================="
-  echo ">>> SUCCESS: All 4 services ACTIVE and running concurrently on VPS! <<<"
+  echo ">>> SUCCESS: Trend Bot STOPPED. AMD Bot & Telemetry ACTIVE on VPS! <<<"
   echo "=============================================================================="
-  echo "  • bybit-bot.service      : ACTIVE (Trend Runner Engine)"
-  echo "  • bybit-telemetry.service: ACTIVE (Trend Dashboard on Port 8080)"
+  echo "  • bybit-bot.service      : STOPPED / DISABLED (Trend Runner Paused)"
+  echo "  • bybit-telemetry.service: ACTIVE (Port 8080)"
   echo "  • amd-bot.service        : ACTIVE (Macro AMD + FVG Bot Engine)"
   echo "  • amd-telemetry.service  : ACTIVE (AMD Dashboard on Port 8081)"
   echo "------------------------------------------------------------------------------"
@@ -291,9 +294,9 @@ if [ "$BOT_ACTIVE" = true ] && [ "$TELEM_ACTIVE" = true ] && [ "$AMD_BOT_ACTIVE"
   echo "🤖 AMD AI API Endpoint   : http://${VPS_IP}:8081/api/ai-summary?password=${FINAL_TPASS}"
   echo "🔑 Access Password       : ${FINAL_TPASS}"
   echo "=============================================================================="
-  $SUDO systemctl status bybit-bot bybit-telemetry amd-bot amd-telemetry --no-pager
+  $SUDO systemctl status bybit-telemetry amd-bot amd-telemetry --no-pager
 else
   echo "ERROR: One or more services failed to start."
-  $SUDO systemctl status bybit-bot bybit-telemetry amd-bot amd-telemetry --no-pager
+  $SUDO systemctl status bybit-telemetry amd-bot amd-telemetry --no-pager
   exit 1
 fi

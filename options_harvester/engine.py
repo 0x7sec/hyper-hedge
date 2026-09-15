@@ -155,7 +155,17 @@ class OptionsHarvesterEngine:
             self.ddh.current_perp_position = data.get("ddh_perp_position", 0.0)
             self.ddh.total_rebalance_count = data.get("ddh_rebalance_count", 0)
             self.ddh.ddh_realized_pnl = data.get("ddh_realized_pnl", 0.0)
-            logger.info(f"Loaded options harvester state: {self.state} | Cycle {self.cycle_id}")
+
+            # If switching from simulation to live exchange, discard simulated legs to place authentic Bybit orders
+            if not self.client.dry_run and data.get("dry_run", True) is True:
+                logger.info("[LIVE TRANSITION] Switching from simulation to LIVE Bybit UTA. Clearing simulated state to deploy authentic exchange orders.")
+                self.state = "STATE_0_SCANNING"
+                self.active_put = None
+                self.active_call = None
+                self.initial_net_premium = 0.0
+                self.last_status_message = "Switched to LIVE mode. Scanning Bybit options chain for authentic execution..."
+
+            logger.info(f"Loaded options harvester state: {self.state} | Cycle {self.cycle_id} | Live: {not self.client.dry_run}")
         except Exception as e:
             logger.error(f"Error loading state from {self.state_file}: {e}")
 

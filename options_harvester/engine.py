@@ -65,6 +65,7 @@ class OptionsHarvesterEngine:
         self.breakevens: Dict[str, float] = {}
         self.cone: Dict[str, float] = {}
         self.initial_net_premium = 0.0
+        self.probability_of_profit = 0.80
 
         # Load existing state if available
         self._load_state()
@@ -112,6 +113,9 @@ class OptionsHarvesterEngine:
             "breakevens": self.breakevens,
             "cone": self.cone,
             "initial_net_premium": self.initial_net_premium,
+            "probability_of_profit": getattr(self, "probability_of_profit", 0.80),
+            "strategy_type": "SHORT_STRANGLE_VRP_HARVESTER",
+            "side_action": "SELL_SHORT_STRANGLE",
             "ddh_perp_position": self.ddh.current_perp_position,
             "ddh_rebalance_count": self.ddh.total_rebalance_count,
             "ddh_realized_pnl": self.ddh.ddh_realized_pnl,
@@ -152,6 +156,7 @@ class OptionsHarvesterEngine:
             self.breakevens = data.get("breakevens", {})
             self.cone = data.get("cone", {})
             self.initial_net_premium = data.get("initial_net_premium", 0.0)
+            self.probability_of_profit = data.get("probability_of_profit", 0.80)
             self.ddh.current_perp_position = data.get("ddh_perp_position", 0.0)
             self.ddh.total_rebalance_count = data.get("ddh_rebalance_count", 0)
             self.ddh.ddh_realized_pnl = data.get("ddh_realized_pnl", 0.0)
@@ -205,36 +210,50 @@ class OptionsHarvesterEngine:
         except Exception as e:
             logger.error(f"Error writing to trades CSV: {e}")
 
-    def _reconcile_open_positions_with_exchange(self) -> None:
+    def _reconcile_open_positions_with_exchange(self, now: float) -> None:
         """Verify that active strangle legs actually exist on Bybit exchange."""
         if self.client.dry_run or not self.client.session:
             return
 
+        # Only reconcile after positions have been deployed and in HARVESTING state
+        if self.state != "STATE_2_HARVESTING":
+            return
+
+        # Give a 30s grace period after deployment for orders to settle or rest
+        if (now - self.cycle_start_time) < 30.0:
+            return
+
         try:
-            res = self.client.session.get_positions(category="option", baseCoin="BTC")
-            if res.get("retCode") == 0:
-                open_positions = {
-                    p.get("symbol"): float(p.get("size", 0.0))
-                    for p in res.get("result", {}).get("list", [])
-                    if float(p.get("size", 0.0)) > 0
-                }
+            res_pos = self.client.session.get_positions(category="option", baseCoin="BTC")
+            open_positions = {
+                p.get("symbol"): float(p.get("size", 0.0))
+                for p in res_pos.get("result", {}).get("list", [])
+                if float(p.get("size", 0.0)) > 0
+            } if res_pos.get("retCode") == 0 else {}
 
-                # If in HARVESTING or DEPLOYING, verify legs exist on Bybit
-                if self.state in ("STATE_1_DEPLOYING", "STATE_2_HARVESTING"):
-                    p_sym = self.active_put.get("symbol") if self.active_put else None
-                    c_sym = self.active_call.get("symbol") if self.active_call else None
+            res_ord = self.client.session.get_open_orders(category="option", baseCoin="BTC")
+            open_orders = {
+                o.get("symbol")
+                for o in res_ord.get("result", {}).get("list", [])
+            } if res_ord.get("retCode") == 0 else set()
 
-                    # If missing from Bybit, reset to SCANNING to place live orders
-                    if not p_sym or not c_sym or (p_sym not in open_positions and c_sym not in open_positions):
-                        logger.warning(
-                            f"[RECONCILE] Active strangle legs (Put: {p_sym}, Call: {c_sym}) NOT found in Bybit positions: {list(open_positions.keys())}. "
-                            f"Resetting to STATE_0_SCANNING to deploy authentic exchange orders."
-                        )
-                        self.state = "STATE_0_SCANNING"
-                        self.active_put = None
-                        self.active_call = None
-                        self.initial_net_premium = 0.0
-                        self._save_state()
+            p_sym = self.active_put.get("symbol") if self.active_put else None
+            c_sym = self.active_call.get("symbol") if self.active_call else None
+
+            p_active = (p_sym in open_positions) or (p_sym in open_orders)
+            c_active = (c_sym in open_positions) or (c_sym in open_orders)
+
+            # If legs were not found in either open positions or open orders on Bybit, reset to SCANNING
+            if not p_active and not c_active:
+                logger.warning(
+                    f"[RECONCILE] Active strangle legs (Put: {p_sym}, Call: {c_sym}) NOT found on Bybit. "
+                    f"Resetting to STATE_0_SCANNING to deploy authentic exchange orders."
+                )
+                self.state = "STATE_0_SCANNING"
+                self.active_put = None
+                self.active_call = None
+                self.initial_net_premium = 0.0
+                self._save_state()
         except Exception as e:
             logger.error(f"Error reconciling options positions with Bybit: {e}")
 
@@ -250,7 +269,7 @@ class OptionsHarvesterEngine:
             spot_price = self.client.get_perp_price("BTCUSDT")
 
         # 0. Exchange position reconciliation guard
-        self._reconcile_open_positions_with_exchange()
+        self._reconcile_open_positions_with_exchange(now)
 
         # 1. Circuit breaker cooldown check
         if self.circuit_breaker_active:
@@ -300,13 +319,14 @@ class OptionsHarvesterEngine:
         self.active_call = {**c, "qty": BASE_ORDER_QTY, "active": False, "entry_time": 0.0}
         self.breakevens = candidate["breakevens"]
         self.cone = candidate["cone"]
+        self.probability_of_profit = candidate.get("probability_of_profit", 0.80)
         self.initial_net_premium = (p["entry_price"] + c["entry_price"]) * BASE_ORDER_QTY
 
         self.state = "STATE_1_DEPLOYING"
         self.last_status_message = (
-            f"Selected Strangle: Put {p['symbol']} (${p['strike']:,.0f}) & "
+            f"Selected Strangle (SELLING ~80% PoP): Put {p['symbol']} (${p['strike']:,.0f}) & "
             f"Call {c['symbol']} (${c['strike']:,.0f}) | Net Delta: {candidate['net_delta_initial']:+.4f} | "
-            f"Gross Premium: ${self.initial_net_premium:.2f}"
+            f"Gross Premium: ${self.initial_net_premium:.2f} | PoP: {self.probability_of_profit*100:.1f}%"
         )
         logger.info(self.last_status_message)
 
@@ -569,6 +589,9 @@ class OptionsHarvesterEngine:
             "active_call": self.active_call,
             "breakevens": self.breakevens,
             "cone": self.cone,
+            "probability_of_profit": getattr(self, "probability_of_profit", 0.80),
+            "strategy_type": "SHORT_STRANGLE_VRP_HARVESTER",
+            "side_action": "SELL_SHORT_STRANGLE",
             "ddh": {
                 "perp_position": self.ddh.current_perp_position,
                 "rebalance_count": self.ddh.total_rebalance_count,

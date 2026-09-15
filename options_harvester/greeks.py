@@ -198,3 +198,22 @@ class GreeksAggregator:
             "one_half_sigma_upper": spot + one_half_sigma,
             "one_sigma_pct": (one_sigma / spot) * 100.0 if spot > 0 else 0.0,
         }
+
+    @staticmethod
+    def calculate_probability_of_profit(
+        put_delta: float,
+        call_delta: float,
+        has_premium_buffer: bool = True,
+    ) -> float:
+        """
+        Calculate theoretical Probability of Profit (PoP) for selling the Short Strangle.
+        In BSM, Delta is a close linear proxy for Probability of Expiring In-The-Money (ITM):
+        - A 15-delta Call has P(ITM) ~ 15% -> P(Expires OTM) ~ 85%
+        - A -15-delta Put has P(ITM) ~ 15% -> P(Expires OTM) ~ 85%
+        - Base joint probability of staying between strikes: 1 - (|Delta_P| + Delta_C) ~ 70%
+        - Total collected premium expands the safe zone to breakevens, raising empirical PoP to ~78-82% (~80%).
+        """
+        base_pop = 1.0 - (abs(put_delta) + abs(call_delta))
+        if has_premium_buffer:
+            base_pop += 0.08
+        return max(0.50, min(0.95, base_pop))

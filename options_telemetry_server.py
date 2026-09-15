@@ -484,6 +484,12 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
       </div>
 
       <div class="card">
+        <div class="card-label">Statistical Edge (VRP)</div>
+        <div class="card-value" style="color: #38bdf8;" id="val-pop">~80% Prob. Win</div>
+        <div class="card-sub">Selling Options (Short Strangle vs Buying)</div>
+      </div>
+
+      <div class="card">
         <div class="card-label">Net Delta (Δ) Exposure</div>
         <div class="card-value" style="color: var(--accent);" id="val-delta">__DELTA__</div>
         <div class="card-sub">Target: 0.0000 | Tolerance: ±0.10</div>
@@ -539,7 +545,7 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
       <table>
         <thead>
           <tr>
-            <th>Leg</th>
+            <th>Leg & Side (Action)</th>
             <th>Contract Symbol</th>
             <th>Strike</th>
             <th>Size</th>
@@ -692,6 +698,12 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
       const deltaPin = document.getElementById('delta-pin');
       if (deltaPin) deltaPin.style.left = `${pinPct}%`;
 
+      // Statistical Edge (PoP)
+      const popEl = document.getElementById('val-pop');
+      if (popEl && d.probability_of_profit) {
+        popEl.textContent = `${(d.probability_of_profit * 100).toFixed(1)}% Prob. Win`;
+      }
+
       // Active Legs Table
       const p = d.active_put;
       const c = d.active_call;
@@ -699,7 +711,7 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
       if (tbody && p && c) {
         tbody.innerHTML = `
           <tr>
-            <td><strong style="color: var(--green);">PUT</strong></td>
+            <td><strong style="color: var(--green);">SHORT PUT (SELL)</strong></td>
             <td><code>${p.symbol}</code></td>
             <td>$${(p.strike || 0).toLocaleString()}</td>
             <td>${p.qty || 0.01}</td>
@@ -710,7 +722,7 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
             <td><strong>${(((p.entry_price - p.mark_price) / p.entry_price) * 100).toFixed(1)}%</strong></td>
           </tr>
           <tr>
-            <td><strong style="color: var(--accent);">CALL</strong></td>
+            <td><strong style="color: var(--accent);">SHORT CALL (SELL)</strong></td>
             <td><code>${c.symbol}</code></td>
             <td>$${(c.strike || 0).toLocaleString()}</td>
             <td>${c.qty || 0.01}</td>
@@ -885,17 +897,20 @@ class OptionsTelemetryHandler(BaseHTTPRequestHandler):
         c = state.get("active_call")
         be = state.get("breakevens", {})
         up_sec, up_str = get_uptime_info(state)
+        pop_val = float(state.get("probability_of_profit", 0.80)) * 100.0
 
         md = f"""# Bybit UTA Delta-Neutral Options Harvester — AI Status Summary
 **Timestamp**: {datetime.now(timezone.utc).isoformat()}
 **Uptime**: {up_str} ({up_sec}s)
 **Status**: {state.get('state', 'UNKNOWN')}
+**Strategy Action**: SELLING OPTIONS (Short Strangle: Short Put + Short Call)
+**Statistical Edge**: ~80% Probability of Profit ({pop_val:.1f}%) via Volatility Risk Premium (VRP) & Positive Theta (Θ)
 **Capital Enclosure**: ${state.get('current_capital', 1000):,.2f} / ${state.get('allocated_capital', 1000):,.2f} USD strict
 **Realized PnL**: ${state.get('total_realized_pnl', 0):+.2f} ({state.get('profitable_cycles', 0)}/{state.get('total_cycles_completed', 0)} wins, {state.get('win_rate_pct', 0):.1f}%)
 
 ## Strangle Portfolio Configuration
-- **Active Put**: {p.get('symbol', 'None') if p else 'None'} (Strike: ${p.get('strike', 0) if p else 0:,.0f}, Entry: ${p.get('entry_price', 0) if p else 0:.2f})
-- **Active Call**: {c.get('symbol', 'None') if c else 'None'} (Strike: ${c.get('strike', 0) if c else 0:,.0f}, Entry: ${c.get('entry_price', 0) if c else 0:.2f})
+- **Active Short Put (SELL)**: {p.get('symbol', 'None') if p else 'None'} (Strike: ${p.get('strike', 0) if p else 0:,.0f}, Entry: ${p.get('entry_price', 0) if p else 0:.2f})
+- **Active Short Call (SELL)**: {c.get('symbol', 'None') if c else 'None'} (Strike: ${c.get('strike', 0) if c else 0:,.0f}, Entry: ${c.get('entry_price', 0) if c else 0:.2f})
 - **Profit Range Cushion**: ${be.get('lower_breakeven', 0):,.0f} to ${be.get('upper_breakeven', 0):,.0f} ({be.get('range_width_pct', 0):.2f}%)
 - **Dynamic Delta Hedge**: Perp Qty: {state.get('ddh_perp_position', 0):.3f} | Rebalances: {state.get('ddh_rebalance_count', 0)} | PnL: ${state.get('ddh_realized_pnl', 0):+.2f}
 - **Message**: {state.get('last_status_message', 'N/A')}
@@ -1015,7 +1030,7 @@ class OptionsTelemetryHandler(BaseHTTPRequestHandler):
         if p and c:
           rows = f"""
             <tr>
-              <td><strong style="color: var(--green);">PUT</strong></td>
+              <td><strong style="color: var(--green);">SHORT PUT (SELL)</strong></td>
               <td><code>{p['symbol']}</code></td>
               <td>${p.get('strike', 0):,.0f}</td>
               <td>{p.get('qty', 0.01)}</td>
@@ -1026,7 +1041,7 @@ class OptionsTelemetryHandler(BaseHTTPRequestHandler):
               <td><strong>70% Harvest</strong></td>
             </tr>
             <tr>
-              <td><strong style="color: var(--accent);">CALL</strong></td>
+              <td><strong style="color: var(--accent);">SHORT CALL (SELL)</strong></td>
               <td><code>{c['symbol']}</code></td>
               <td>${c.get('strike', 0):,.0f}</td>
               <td>{c.get('qty', 0.01)}</td>

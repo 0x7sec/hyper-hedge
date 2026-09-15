@@ -202,6 +202,12 @@ class StrangleScanner:
                             hours_to_expiry=dte_h,
                         )
 
+                        pop = GreeksAggregator.calculate_probability_of_profit(
+                            put_delta=p["_delta"],
+                            call_delta=c["_delta"],
+                            has_premium_buffer=True,
+                        )
+
                         best_candidate = {
                             "expiry_str": exp_key,
                             "dte_hours": dte_h,
@@ -209,6 +215,7 @@ class StrangleScanner:
                             "spot_price": spot_price,
                             "atm_iv": avg_iv,
                             "net_delta_initial": net_delta,
+                            "probability_of_profit": pop,
                             "breakevens": be,
                             "cone": cone,
                             "put": {

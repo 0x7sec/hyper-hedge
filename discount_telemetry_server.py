@@ -124,8 +124,17 @@ def read_discount_state() -> Dict[str, Any]:
     }
 
 
+_LOGS_CACHE: Dict[int, List[str]] = {}
+_LAST_LOGS_FETCH = 0.0
+
+
 def get_systemd_logs(lines: int = 50) -> List[str]:
-    """Fetch recent logs from discount_bot.log file or systemd journal."""
+    """Fetch recent logs from discount_bot.log file or systemd journal with caching."""
+    global _LOGS_CACHE, _LAST_LOGS_FETCH
+    now = time.time()
+    if (now - _LAST_LOGS_FETCH < 2.0) and lines in _LOGS_CACHE:
+        return _LOGS_CACHE[lines]
+
     log_file = os.path.join(BASE_DIR, "discount_bot.log")
     if os.path.exists(log_file):
         try:
@@ -133,7 +142,10 @@ def get_systemd_logs(lines: int = 50) -> List[str]:
                 content = f.readlines()
                 cleaned = [sanitize_logs(l.rstrip()) for l in content if l.strip()]
                 if cleaned:
-                    return cleaned[-lines:]
+                    res = cleaned[-lines:]
+                    _LOGS_CACHE[lines] = res
+                    _LAST_LOGS_FETCH = now
+                    return res
         except Exception:
             pass
 
@@ -144,11 +156,17 @@ def get_systemd_logs(lines: int = 50) -> List[str]:
             if res.returncode == 0 and res.stdout.strip():
                 raw_lines = [sanitize_logs(l.rstrip()) for l in res.stdout.strip().split("\n") if l.strip()]
                 if raw_lines:
-                    return raw_lines[-lines:]
+                    res = raw_lines[-lines:]
+                    _LOGS_CACHE[lines] = res
+                    _LAST_LOGS_FETCH = now
+                    return res
         except Exception:
             pass
 
-    return ["System daemon active. Awaiting trade engine events..."]
+    fallback = ["System daemon active. Awaiting trade engine events..."]
+    _LOGS_CACHE[lines] = fallback
+    _LAST_LOGS_FETCH = now
+    return fallback
 
 
 _PRICE_CACHE = {}
@@ -861,14 +879,17 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
       // Logs
       if (d.logs && d.logs.length > 0) {
         const term = document.getElementById('terminal');
-        const isScrolledToBottom = term.scrollHeight - term.clientHeight <= term.scrollTop + 30;
-        term.innerText = d.logs.join('\n');
-        if (isScrolledToBottom) {
-          term.scrollTop = term.scrollHeight;
+        if (term) {
+          const isScrolledToBottom = term.scrollHeight - term.clientHeight <= term.scrollTop + 40;
+          term.innerText = Array.isArray(d.logs) ? d.logs.join(String.fromCharCode(10)) : String(d.logs);
+          if (isScrolledToBottom) {
+            term.scrollTop = term.scrollHeight;
+          }
         }
       }
 
-      document.getElementById('last-update').innerText = 'Synced ' + new Date().toLocaleTimeString();
+      const syncEl = document.getElementById('last-update');
+      if (syncEl) syncEl.innerText = 'Synced ' + new Date().toLocaleTimeString();
     }
 
     function connectWebSocket() {
@@ -878,6 +899,7 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
       try {
         ws = new WebSocket(wsUrl);
       } catch (e) {
+        console.warn('[WS] WebSocket init failed, starting polling:', e);
         startPollingFallback();
         return;
       }
@@ -904,7 +926,8 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
         }
       };
 
-      ws.onerror = () => {
+      ws.onerror = (err) => {
+        console.warn('[WS] Socket error event:', err);
         try { ws.close(); } catch(e) {}
       };
 
@@ -928,10 +951,19 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
           if (res.ok) {
             const data = await res.json();
             applyLiveUpdate(data);
+            const badge = document.getElementById('ws-badge');
+            if (badge && (!ws || ws.readyState !== WebSocket.OPEN)) {
+              badge.textContent = 'POLLING (3s)';
+              badge.className = 'badge badge-active';
+            }
           }
         } catch (e) {}
       }, 3000);
     }
+
+    // Scroll logs to bottom and initiate live socket connection
+    const initialTerm = document.getElementById('terminal');
+    if (initialTerm) initialTerm.scrollTop = initialTerm.scrollHeight;
 
     connectWebSocket();
   </script>

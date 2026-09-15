@@ -380,28 +380,39 @@ class OptionsHarvesterEngine:
         put_mark = float(put_ticker.get("markPrice") or self.active_put["mark_price"]) if put_ticker else self.active_put["mark_price"]
         call_mark = float(call_ticker.get("markPrice") or self.active_call["mark_price"]) if call_ticker else self.active_call["mark_price"]
 
+        # Orderbook closing cost (ask price to buy back the short option)
+        put_ask = float(put_ticker.get("ask1Price") or 0.0) if put_ticker else 0.0
+        call_ask = float(call_ticker.get("ask1Price") or 0.0) if call_ticker else 0.0
+
+        # Close valuation: use real market ask if active, else fall back to mark
+        put_close_cost = put_ask if put_ask > 0 else put_mark
+        call_close_cost = call_ask if call_ask > 0 else call_mark
+
         if put_ticker:
             self.active_put["mark_price"] = put_mark
+            self.active_put["close_cost"] = put_close_cost
             self.active_put["delta"] = float(put_ticker.get("delta") or self.active_put["delta"])
             self.active_put["gamma"] = float(put_ticker.get("gamma") or self.active_put["gamma"])
             self.active_put["theta"] = float(put_ticker.get("theta") or self.active_put["theta"])
 
         if call_ticker:
             self.active_call["mark_price"] = call_mark
+            self.active_call["close_cost"] = call_close_cost
             self.active_call["delta"] = float(call_ticker.get("delta") or self.active_call["delta"])
             self.active_call["gamma"] = float(call_ticker.get("gamma") or self.active_call["gamma"])
             self.active_call["theta"] = float(call_ticker.get("theta") or self.active_call["theta"])
 
         # ── Check 1: 2.0x Premium Hard Stop-Loss Guard ─────────────────────────
+        # Compare actual buyback price against entry execution price
         put_entry = self.active_put["entry_price"]
         call_entry = self.active_call["entry_price"]
 
-        if put_mark >= put_entry * PREMIUM_STOP_LOSS_MULT:
-            self._close_cycle_stop_loss(spot_price, put_mark, call_mark, "PUT_2X_SL_HIT")
+        if put_close_cost >= put_entry * PREMIUM_STOP_LOSS_MULT:
+            self._close_cycle_stop_loss(spot_price, put_close_cost, call_close_cost, "PUT_2X_SL_HIT")
             return
 
-        if call_mark >= call_entry * PREMIUM_STOP_LOSS_MULT:
-            self._close_cycle_stop_loss(spot_price, put_mark, call_mark, "CALL_2X_SL_HIT")
+        if call_close_cost >= call_entry * PREMIUM_STOP_LOSS_MULT:
+            self._close_cycle_stop_loss(spot_price, put_close_cost, call_close_cost, "CALL_2X_SL_HIT")
             return
 
         # ── Check 2: Expiration Gamma Pin Avoidance (T-120m Cutoff) ─────────────
@@ -410,15 +421,15 @@ class OptionsHarvesterEngine:
             hours_left = get_hours_to_expiry(exp_dt)
             minutes_left = hours_left * 60.0
             if minutes_left <= GAMMA_PIN_CUTOFF_MINUTES:
-                self._close_cycle_profit(spot_price, put_mark, call_mark, "GAMMA_PIN_T120M_CUTOFF")
+                self._close_cycle_profit(spot_price, put_close_cost, call_close_cost, "GAMMA_PIN_T120M_CUTOFF")
                 return
 
         # ── Check 3: 70% Profit Target Decay Exit ──────────────────────────────
-        current_stew = (put_mark + call_mark) * BASE_ORDER_QTY
+        current_stew = (put_close_cost + call_close_cost) * BASE_ORDER_QTY
         decay_pct = (self.initial_net_premium - current_stew) / self.initial_net_premium if self.initial_net_premium > 0 else 0.0
 
         if decay_pct >= PROFIT_TARGET_DECAY_PCT:
-            self._close_cycle_profit(spot_price, put_mark, call_mark, "70PCT_THETA_HARVESTED")
+            self._close_cycle_profit(spot_price, put_close_cost, call_close_cost, "70PCT_THETA_HARVESTED")
             return
 
         # ── Check 4: Dynamic Delta Hedging (DDH) Rebalancing ───────────────────
@@ -550,8 +561,8 @@ class OptionsHarvesterEngine:
         floating_pnl = 0.0
         decay_pct = 0.0
         if self.active_put and self.active_call and self.initial_net_premium > 0:
-            put_val = self.active_put.get("mark_price", 0.0) * BASE_ORDER_QTY
-            call_val = self.active_call.get("mark_price", 0.0) * BASE_ORDER_QTY
+            put_val = self.active_put.get("close_cost", self.active_put.get("mark_price", 0.0)) * BASE_ORDER_QTY
+            call_val = self.active_call.get("close_cost", self.active_call.get("mark_price", 0.0)) * BASE_ORDER_QTY
             current_stew = put_val + call_val
             floating_pnl = (self.initial_net_premium - current_stew) + (
                 self.ddh.current_perp_position * (spot_price - self.ddh.perp_avg_entry_price)

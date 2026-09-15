@@ -261,7 +261,7 @@ The autonomous daemon and telemetry suite are deployed with a strict **$1,000 US
 | :--- | :--- | :--- |
 | **Allocated Capital** | **$1,000.00 USD strict** | Enforced at engine boot via `ALLOCATED_CAPITAL = 1000.0` |
 | **Max Portfolio Drawdown** | **5.0% ($50.00 USD)** | Emergency circuit breaker (`STATE_6_CIRCUIT_BREAKER`), 4h halt |
-| **Hard Stop Loss** | **2.0x collected premium** | Liquidates leg at market if mark price surges to $\ge 2.0 \cdot P_0$ |
+| **Hard Stop Loss** | **2.0x collected premium** | Liquidates leg at market if orderbook buyback ask price surges to $\ge 2.0 \cdot P_{\text{entry}}$ |
 | **Profit Harvest Target** | **70% Theta Decay** | Closes strangle early when combined mark decays past 70% |
 | **Defensive Roll Target** | **85% Decay** | Rolls winning leg closer to spot to re-center delta and bank cash |
 | **Gamma Pin Avoidance** | **T-120 minutes** | Mandatory closure 2 hours prior to 08:00 UTC settlement |

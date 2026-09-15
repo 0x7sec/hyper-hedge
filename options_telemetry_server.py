@@ -266,6 +266,13 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
       letter-spacing: 0.5px;
     }
     .badge-sim { background: rgba(245, 158, 11, 0.15); color: var(--amber); border: 1px solid rgba(245, 158, 11, 0.3); }
+    .badge-live { background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); }
+    .badge-uptime {
+      background: rgba(168, 85, 247, 0.15);
+      color: #c084fc;
+      border: 1px solid rgba(168, 85, 247, 0.3);
+      font-weight: 600;
+    }
     .badge-live { background: rgba(16, 185, 129, 0.15); color: var(--green); border: 1px solid rgba(16, 185, 129, 0.3); }
     .badge-active { background: rgba(56, 189, 248, 0.15); color: var(--accent); border: 1px solid rgba(56, 189, 248, 0.3); }
     .badge-socket {
@@ -453,8 +460,9 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
         <p>Short Strangle Volatility Risk Premium (VRP) & Dynamic Delta Hedging (DDH) Engine</p>
       </div>
       <div class="badges">
-        <span class="badge __MODE_BADGE__">__MODE_STR__</span>
+        <span class="badge __MODE_BADGE__" id="mode-badge">__MODE_STR__</span>
         <span class="badge badge-active" id="engine-state">__STATE__</span>
+        <span class="badge badge-uptime" id="uptime-badge">⏱️ UPTIME: __UPTIME__</span>
         <span class="badge badge-socket" id="ws-badge">
           <span class="dot"></span> LIVE WS (8083)
         </span>
@@ -598,6 +606,20 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
 
     function applyLiveUpdate(d) {
       if (!d) return;
+
+      // Update Mode Badge
+      const modeEl = document.getElementById('mode-badge');
+      if (modeEl) {
+        const isLive = d.dry_run === false;
+        modeEl.textContent = isLive ? 'LIVE BYBIT UTA' : 'SIMULATION (DRY-RUN)';
+        modeEl.className = `badge ${isLive ? 'badge-live' : 'badge-sim'}`;
+      }
+
+      // Update Uptime Badge
+      const upEl = document.getElementById('uptime-badge');
+      if (upEl && d.uptime) {
+        upEl.textContent = `⏱️ UPTIME: ${d.uptime}`;
+      }
 
       // Update State Badge
       const stEl = document.getElementById('engine-state');
@@ -964,16 +986,16 @@ class OptionsTelemetryHandler(BaseHTTPRequestHandler):
         p = state.get("active_put")
         c = state.get("active_call")
         be = state.get("breakevens", {})
-        prices = get_live_market_prices()
-        spot = prices.get("BTCUSDT", 75500.0)
-
-        tot_pnl = state.get("total_realized_pnl", 0.0)
-        pnl_color = "#10b981" if tot_pnl >= 0 else "#ef4444"
+        is_live = not state.get("dry_run", True)
+        mode_str = "LIVE BYBIT UTA" if is_live else "SIMULATION (DRY-RUN)"
+        mode_badge = "badge-live" if is_live else "badge-sim"
+        up_sec, up_str = get_uptime_info(state)
 
         html = DASHBOARD_HTML_TEMPLATE
         html = html.replace("__PORT__", str(PORT))
-        html = html.replace("__MODE_STR__", "SIMULATION (DRY-RUN)")
-        html = html.replace("__MODE_BADGE__", "badge-sim")
+        html = html.replace("__MODE_STR__", mode_str)
+        html = html.replace("__MODE_BADGE__", mode_badge)
+        html = html.replace("__UPTIME__", up_str)
         html = html.replace("__STATE__", state.get("state", "STATE_0_SCANNING"))
         html = html.replace("__CAPITAL__", f"${state.get('current_capital', 1000):,.2f}")
         html = html.replace("__PNL__", f"{'+' if tot_pnl >= 0 else ''}${tot_pnl:.2f}")

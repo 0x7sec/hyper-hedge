@@ -174,8 +174,27 @@ class BybitOptionsClient:
             )
             if res.get("retCode") == 0:
                 real_id = res["result"].get("orderId", order_id)
-                logger.info(f"[LIVE OPTION] Sold {symbol} | ID: {real_id} | {formatted_qty:.2f} @ ${formatted_price:,.2f}")
+                logger.info(f"[LIVE OPTION] Sold {symbol} (PostOnly) | ID: {real_id} | {formatted_qty:.2f} @ ${formatted_price:,.2f}")
                 return real_id
+            elif res.get("retCode") in (110007, 10001, 110006):
+                logger.info(f"[LIVE OPTION] PostOnly rejected ({res.get('retMsg')}), retrying with standard GTC Limit...")
+                order_id_gtc = f"{order_id}_gtc"
+                res_gtc = self.session.place_order(
+                    category="option",
+                    symbol=symbol,
+                    side="Sell",
+                    orderType="Limit",
+                    qty=str(formatted_qty),
+                    price=px_str,
+                    timeInForce="GTC",
+                    orderLinkId=order_id_gtc,
+                )
+                if res_gtc.get("retCode") == 0:
+                    real_id = res_gtc["result"].get("orderId", order_id_gtc)
+                    logger.info(f"[LIVE OPTION] Sold {symbol} (GTC Limit) | ID: {real_id} | {formatted_qty:.2f} @ ${formatted_price:,.2f}")
+                    return real_id
+                else:
+                    logger.warning(f"Bybit Option GTC Limit error: {res_gtc.get('retMsg')} (code {res_gtc.get('retCode')})")
             else:
                 logger.warning(f"Bybit Option Order error: {res.get('retMsg')} (code {res.get('retCode')})")
         except Exception as e:

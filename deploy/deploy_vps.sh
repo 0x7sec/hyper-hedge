@@ -300,7 +300,7 @@ Group=$CURRENT_GROUP
 WorkingDirectory=$APP_DIR
 EnvironmentFile=$APP_DIR/.env
 Environment=PYTHONUNBUFFERED=1
-ExecStart=$APP_DIR/venv/bin/python -u run_options_harvester.py --dry-run
+ExecStart=$APP_DIR/venv/bin/python -u run_options_harvester.py --live
 Restart=always
 RestartSec=10
 

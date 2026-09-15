@@ -10,7 +10,7 @@ Group=root
 WorkingDirectory=/root/hyper_hedge_research
 EnvironmentFile=/root/hyper_hedge_research/.env
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/root/hyper_hedge_research/venv/bin/python -u run_options_harvester.py --dry-run
+ExecStart=/root/hyper_hedge_research/venv/bin/python -u run_options_harvester.py --live
 Restart=always
 RestartSec=10
 

@@ -45,8 +45,11 @@ else
 fi
 
 cd "$APP_DIR"
-# Keep existing trade records ledger intact across updates
-echo "Preserving trade history ledger..."
+# Keep existing trade records ledger intact across updates, purging any corrupt 0.0 exit records
+echo "Preserving and sanitizing trade history ledgers..."
+if [ -f amd_trades.csv ]; then
+  awk -F',' 'NR==1 || ($5 > 0.0)' amd_trades.csv > amd_trades.clean.csv && mv amd_trades.clean.csv amd_trades.csv || true
+fi
 echo "=== [3/6] Setting Up Python Virtual Environment ==="
 if [ ! -d "venv" ]; then
   python3 -m venv venv

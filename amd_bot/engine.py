@@ -704,14 +704,14 @@ class AMDEngine:
 
                             if cur_px > 0:
                                 if pair.position_side == "LONG":
-                                    if cur_px <= pair.stop_loss:
+                                    if pair.stop_loss > 0 and cur_px <= pair.stop_loss:
                                         sl_hit = True
-                                    elif cur_px >= pair.take_profit:
+                                    elif pair.take_profit > 0 and cur_px >= pair.take_profit:
                                         tp_hit = True
                                 elif pair.position_side == "SHORT":
-                                    if cur_px >= pair.stop_loss:
+                                    if pair.stop_loss > 0 and cur_px >= pair.stop_loss:
                                         sl_hit = True
-                                    elif cur_px <= pair.take_profit:
+                                    elif pair.take_profit > 0 and cur_px <= pair.take_profit:
                                         tp_hit = True
 
                             # If live, also check if position was closed on Bybit via exchange order
@@ -720,13 +720,15 @@ class AMDEngine:
                                 sym_pos = next((p for p in open_pos if p.get("symbol") == sym and float(p.get("size", 0) or 0) > 0), None)
                                 if not sym_pos:
                                     closed_records = self.client.get_closed_pnl(sym, limit=1)
-                                    exit_px = pair.take_profit
+                                    exit_px = pair.take_profit if pair.take_profit > 0 else (cur_px if cur_px > 0 else pair.entry_price)
                                     exit_reason = "EXCHANGE_CLOSE"
                                     if closed_records:
                                         rec = closed_records[0]
                                         exit_px = float(rec.get("avgExitPrice", 0) or exit_px)
                                         pnl_val = float(rec.get("closedPnl", 0) or 0)
                                         exit_reason = "TP" if pnl_val >= 0 else "SL"
+                                    if exit_px <= 0:
+                                        exit_px = cur_px if cur_px > 0 else pair.entry_price
                                     logger.info(f"[{sym}] Exchange position closed via {exit_reason} @ {exit_px:.2f}!")
                                     self._record_closed_trade(pair, exit_px, exit_reason)
                                     pair.phase = "ACCUMULATING"
@@ -740,6 +742,8 @@ class AMDEngine:
                             if sl_hit or tp_hit:
                                 exit_reason = "TP" if tp_hit else "SL"
                                 exit_px = pair.take_profit if tp_hit else pair.stop_loss
+                                if exit_px <= 0:
+                                    exit_px = cur_px if cur_px > 0 else pair.entry_price
                                 logger.info(f"[{sym}] POSITION CLOSED via {exit_reason} @ {exit_px:.2f}!")
                                 if not self.client.is_dry_run and exit_reason == "SL":
                                     self.client.close_position_market(sym, pair.position_side, pair.position_size)
@@ -764,7 +768,7 @@ class AMDEngine:
     def _record_closed_trade(self, pair: PairAMDState, exit_px: float, exit_reason: str) -> None:
         """Calculate PnL, deduct fees, log to CSV, and retain in memory."""
         ep = pair.entry_price
-        xp = exit_px
+        xp = exit_px if exit_px > 0 else (pair.mark_price if pair.mark_price > 0 else ep)
         sz = pair.position_size
         dur_min = (time.time() - pair.entry_time) / 60.0 if pair.entry_time else 0.0
 
@@ -818,21 +822,30 @@ class AMDEngine:
             logger.error(f"Failed to append to {TRADES_FILE}: {e}")
 
     def _load_trade_history(self) -> None:
-        """Load closed trade records from amd_trades.csv if present."""
+        """Load closed trade records from amd_trades.csv, automatically filtering out corrupt exit_price=0.0 records."""
         if not os.path.exists(TRADES_FILE):
             return
+        valid_rows = []
+        header_row = None
+        has_corrupt = False
         try:
             with open(TRADES_FILE, "r", encoding="utf-8") as f:
                 reader = csv.reader(f)
-                header = next(reader, None)
+                header_row = next(reader, None)
                 for row in reader:
                     if len(row) >= 10:
+                        xp = float(row[4])
+                        # Filter out corrupt/phantom records where exit price is zero
+                        if xp <= 0.0:
+                            has_corrupt = True
+                            logger.warning(f"Purging corrupt historical trade record with exit_price=0.0: {row[:5]}")
+                            continue
                         self.closed_trades.append({
                             "timestamp": row[0],
                             "symbol": row[1],
                             "side": row[2],
                             "entry_price": float(row[3]),
-                            "exit_price": float(row[4]),
+                            "exit_price": xp,
                             "qty": float(row[5]),
                             "gross_pnl": float(row[6]),
                             "fees": float(row[7]),
@@ -841,11 +854,20 @@ class AMDEngine:
                             "duration_minutes": float(row[10]) if len(row) > 10 else 0.0,
                             "macro_bias": row[11] if len(row) > 11 else "",
                         })
+                        valid_rows.append(row)
+
+            # Rewrite clean amd_trades.csv without corrupt exit_price=0.0 records
+            if has_corrupt and header_row:
+                with open(TRADES_FILE, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(header_row)
+                    writer.writerows(valid_rows)
+                logger.info(f"Cleaned {TRADES_FILE}: purged corrupt records, retained {len(valid_rows)} authentic trades.")
         except Exception as e:
             logger.debug(f"Could not load trade history from {TRADES_FILE}: {e}")
 
     def _reconcile_positions(self) -> None:
-        """Adopt any live open positions from Bybit on engine startup."""
+        """Adopt any live open positions from Bybit on engine startup, strictly validating size and SL/TP."""
         if self.client.is_dry_run:
             return
         logger.info("Reconciling live Bybit exchange positions for AMD bot...")
@@ -862,6 +884,21 @@ class AMDEngine:
                     tp = float(pos.get("takeProfit", 0) or 0)
 
                     if sz > 0:
+                        # Safety Guard: Check if position sizing matches AMD profile ($1,000 notional)
+                        # Avoid adopting foreign bot positions (e.g. hedge bot 0.49 BTC)
+                        expected_notional = MARGIN_PER_TRADE * pair.profile.leverage  # $1,000.0
+                        actual_notional = sz * ep
+                        if actual_notional > expected_notional * 1.5 or actual_notional < expected_notional * 0.5:
+                            logger.warning(
+                                f"[{sym}] Skipping foreign position: size={sz} (notional ~${actual_notional:.1f} vs expected ${expected_notional:.1f})"
+                            )
+                            continue
+
+                        # Never adopt without valid SL and TP on exchange
+                        if sl <= 0 or tp <= 0:
+                            logger.warning(f"[{sym}] Skipping unmanaged position without valid SL/TP on exchange")
+                            continue
+
                         pair.phase = "IN_POSITION"
                         pair.position_side = "LONG" if side_str == "Buy" else "SHORT"
                         pair.entry_price = ep

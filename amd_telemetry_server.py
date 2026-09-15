@@ -247,12 +247,15 @@ def read_trades(limit: int = 100) -> List[Dict[str, Any]]:
                 header = next(reader, None)
                 for row in reader:
                     if len(row) >= 10:
+                        xp = float(row[4])
+                        if xp <= 0.0:
+                            continue
                         trades.append({
                             "timestamp": row[0],
                             "symbol": row[1],
                             "side": row[2],
                             "entry_price": float(row[3]),
-                            "exit_price": float(row[4]),
+                            "exit_price": xp,
                             "qty": float(row[5]),
                             "gross_pnl": float(row[6]),
                             "fees": float(row[7]),
@@ -404,7 +407,8 @@ class AMDTelemetryHandler(BaseHTTPRequestHandler):
         equity = bybit_acc.get("equity") or state.get("account", {}).get("equity", 0.0)
         wallet = bybit_acc.get("wallet_balance") or state.get("account", {}).get("wallet_balance", 0.0)
         avail = bybit_acc.get("available_balance") or state.get("account", {}).get("available_balance", 0.0)
-        tot_realized_pnl = bybit_acc.get("total_realized_pnl") or state.get("account", {}).get("total_realized_pnl", 0.0)
+        bot_pnl = sum(t.get("net_pnl", 0.0) for t in bot_trades)
+        tot_realized_pnl = round(bot_pnl, 2)
 
         conc = state.get("concurrency", {})
         total_slots = conc.get("total_slots", 4)

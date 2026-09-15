@@ -374,12 +374,12 @@ fi
 echo "=== Pre-caching Historical Kline Data for Research Suite ==="
 ./venv/bin/python scripts/download_latest_candles.py --symbols BTCUSDT,ETHUSDT,SOLUSDT,PAXGUSDT --bars 8000 || echo "Kline pre-caching completed or will fetch on demand."
 
-# Reload and restart daemons (Stopping and disabling bybit-bot as requested)
+# Reload and restart daemons (Stopping and disabling bybit-bot and amd-bot as requested)
 $SUDO systemctl daemon-reload
-$SUDO systemctl stop bybit-bot || true
-$SUDO systemctl disable bybit-bot || true
-$SUDO systemctl enable bybit-telemetry amd-bot amd-telemetry bybit-discount discount-telemetry bybit-options-harvester options-telemetry
-$SUDO systemctl restart bybit-telemetry amd-bot amd-telemetry bybit-discount discount-telemetry bybit-options-harvester options-telemetry
+$SUDO systemctl stop bybit-bot amd-bot || true
+$SUDO systemctl disable bybit-bot amd-bot || true
+$SUDO systemctl enable bybit-telemetry amd-telemetry bybit-discount discount-telemetry bybit-options-harvester options-telemetry
+$SUDO systemctl restart bybit-telemetry amd-telemetry bybit-discount discount-telemetry bybit-options-harvester options-telemetry
 
 echo "=== [6/6] Verifying Daemon Status ==="
 sleep 3
@@ -387,10 +387,10 @@ sleep 3
 VPS_IP=$(curl -s -4 ifconfig.me 2>/dev/null || curl -s -4 icanhazip.com 2>/dev/null || echo "<vps-ip>")
 
 echo "=============================================================================="
-echo ">>> SUCCESS: All Bots & Telemetry Services ACTIVE on VPS! <<<"
+echo ">>> SUCCESS: Bot Services Configured on VPS! <<<"
 echo "=============================================================================="
 echo "  • bybit-telemetry.service        : ACTIVE (Trend Dashboard on Port 8080)"
-echo "  • amd-bot.service                : ACTIVE (Macro AMD + FVG Bot Engine)"
+echo "  • amd-bot.service                : STOPPED / DISABLED (Halted per user request)"
 echo "  • amd-telemetry.service          : ACTIVE (AMD Dashboard on Port 8081)"
 echo "  • bybit-discount.service         : ACTIVE (Discount Buy 3-Engine Suite)"
 echo "  • discount-telemetry.service     : ACTIVE (Discount Dashboard on Port 8082)"
@@ -404,6 +404,6 @@ echo "🛡️ Options Harvester Dashboard : http://${VPS_IP}:8083/dashboard?pass
 echo "🤖 Options AI Summary API     : http://${VPS_IP}:8083/api/ai-summary?password=${FINAL_TPASS}"
 echo "🔑 Access Password            : ${FINAL_TPASS}"
 echo "=============================================================================="
-$SUDO systemctl status bybit-telemetry amd-bot amd-telemetry bybit-discount discount-telemetry bybit-options-harvester options-telemetry --no-pager
+$SUDO systemctl status bybit-telemetry amd-telemetry bybit-discount discount-telemetry bybit-options-harvester options-telemetry --no-pager
 
 

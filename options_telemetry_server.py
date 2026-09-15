@@ -1005,6 +1005,10 @@ class OptionsTelemetryHandler(BaseHTTPRequestHandler):
         mode_str = "LIVE BYBIT UTA" if is_live else "SIMULATION (DRY-RUN)"
         mode_badge = "badge-live" if is_live else "badge-sim"
         up_sec, up_str = get_uptime_info(state)
+        tot_pnl = float(state.get("total_realized_pnl", 0.0))
+        pnl_color = "var(--green)" if tot_pnl >= 0 else "var(--red)"
+        prices = get_live_market_prices()
+        spot = prices.get("BTCUSDT", 75500.0)
 
         html = DASHBOARD_HTML_TEMPLATE
         html = html.replace("__PORT__", str(PORT))

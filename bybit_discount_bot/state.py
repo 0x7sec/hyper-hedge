@@ -39,6 +39,8 @@ class SuiteState:
     options_engine: EngineState
     spot_engine: EngineState
     neutral_engine: EngineState
+    symbol: str = "BTCUSDT"
+    active_pairs: List[str] = field(default_factory=lambda: ["BTCUSDT"])
     system_status: str = "RUNNING"
     started_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -59,6 +61,8 @@ class DiscountStateManager:
             options_engine=EngineState(name="Options Cash-Secured Put"),
             spot_engine=EngineState(name="Spot Maker Accumulator"),
             neutral_engine=EngineState(name="Delta-Hedged Market-Neutral"),
+            symbol="BTCUSDT",
+            active_pairs=["BTCUSDT"],
             system_status="RUNNING",
             started_at=now_str,
         )
@@ -68,19 +72,24 @@ class DiscountStateManager:
             try:
                 with open(self.file_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                return SuiteState(
+                loaded = SuiteState(
                     updated_at=data.get("updated_at", ""),
-                    dry_run=data.get("dry_run", self.dry_run),
+                    dry_run=self.dry_run,
                     options_engine=EngineState(**data.get("options_engine", {})),
                     spot_engine=EngineState(**data.get("spot_engine", {})),
                     neutral_engine=EngineState(**data.get("neutral_engine", {})),
+                    symbol=data.get("symbol", "BTCUSDT"),
+                    active_pairs=data.get("active_pairs", ["BTCUSDT"]),
                     system_status=data.get("system_status", "RUNNING"),
                     started_at=data.get("started_at") or data.get("session_start_iso") or datetime.now(timezone.utc).isoformat(),
                 )
+                loaded.dry_run = self.dry_run
+                return loaded
             except Exception as e:
                 logger.warning(f"Could not load state file {self.file_path} ({e}), initializing fresh state.")
 
         fresh = self._default_state()
+        fresh.dry_run = self.dry_run
         self._atomic_save(fresh)
         return fresh
 

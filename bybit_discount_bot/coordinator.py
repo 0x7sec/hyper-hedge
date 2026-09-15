@@ -33,6 +33,10 @@ class SuiteCoordinator:
         self.symbol = symbol
         self.running = False
 
+        # Set symbol in state
+        self.state_mgr.state.symbol = symbol
+        self.state_mgr.state.active_pairs = [symbol]
+
         if enabled_engines is None:
             enabled_engines = ["options", "spot", "neutral"]
         self.enabled_engines = [e.lower() for e in enabled_engines]

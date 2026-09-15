@@ -61,27 +61,34 @@ class DeltaNeutralEngine:
         target_px = spot_price * (1.0 - NEUTRAL_DISCOUNT_PCT)
         qty = math.floor((self.max_budget / target_px) * 100000) / 100000
 
-        # Open 1x Short Perp Hedge at S0
-        perp_order_id = self.client.place_perp_short_hedge(self.symbol_perp, qty)
-
-        # Place resting Post-Only Spot Limit Buy at discount K
+        # 1. Place resting Post-Only Spot Limit Buy at discount K FIRST
         spot_order_id = self.client.place_spot_maker_order(self.symbol_spot, "Buy", qty, target_px)
+        if not spot_order_id:
+            logger.warning("[DELTA-NEUTRAL] Could not place resting discount buy order. Aborting cycle deployment.")
+            return
 
-        if spot_order_id and perp_order_id:
-            now_str = datetime.now(timezone.utc).isoformat()
-            self.state.last_cycle_start = now_str
-            self.state.status = "RESTING_DISCOUNT_LIMIT"
-            self.state.active_orders.append({
-                "spot_order_id": spot_order_id,
-                "perp_order_id": perp_order_id,
-                "discount_price": target_px,
-                "perp_entry_px": spot_price,
-                "qty": qty,
-                "benchmark_spot": spot_price,
-                "entry_time": time.time(),
-            })
-            self.state.metrics["target_discount_px"] = target_px
-            self.state.metrics["target_spread_pct"] = NEUTRAL_DISCOUNT_PCT * 100
+        # 2. Open 1x Short Perp Hedge at S0 to lock the basis
+        perp_order_id = self.client.place_perp_short_hedge(self.symbol_perp, qty)
+        if not perp_order_id:
+            logger.error("[DELTA-NEUTRAL] Failed to open short perp hedge! Cancelling resting discount order immediately...")
+            self.client.cancel_spot_order(self.symbol_spot, spot_order_id)
+            return
+
+        # Both legs successfully deployed
+        now_str = datetime.now(timezone.utc).isoformat()
+        self.state.last_cycle_start = now_str
+        self.state.status = "RESTING_DISCOUNT_LIMIT"
+        self.state.active_orders.append({
+            "spot_order_id": spot_order_id,
+            "perp_order_id": perp_order_id,
+            "discount_price": target_px,
+            "perp_entry_px": spot_price,
+            "qty": qty,
+            "benchmark_spot": spot_price,
+            "entry_time": time.time(),
+        })
+        self.state.metrics["target_discount_px"] = target_px
+        self.state.metrics["target_spread_pct"] = NEUTRAL_DISCOUNT_PCT * 100
 
     def _manage_resting_cycle(self, spot_price: float):
         """Check for spot fill or cycle expiry."""

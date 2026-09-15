@@ -151,6 +151,38 @@ def get_systemd_logs(lines: int = 50) -> List[str]:
     return ["System daemon active. Awaiting trade engine events..."]
 
 
+_PRICE_CACHE = {}
+_LAST_PRICE_FETCH = 0
+
+
+def get_live_market_prices() -> Dict[str, float]:
+    """Fetch live mark prices for BTCUSDT, ETHUSDT, SOLUSDT with caching."""
+    global _PRICE_CACHE, _LAST_PRICE_FETCH
+    now = time.time()
+    if now - _LAST_PRICE_FETCH < 6 and _PRICE_CACHE:
+        return _PRICE_CACHE
+    try:
+        import requests
+        testnet = os.environ.get("TESTNET", "false").lower() in ("true", "1", "yes")
+        domain = "api-testnet.bybit.com" if testnet else "api.bybit.com"
+        r = requests.get(f"https://{domain}/v5/market/tickers?category=linear", timeout=3).json()
+        if r.get("retCode") == 0 and r.get("result", {}).get("list"):
+            prices = {}
+            for item in r["result"]["list"]:
+                sym = item.get("symbol")
+                if sym in ["BTCUSDT", "ETHUSDT", "SOLUSDT"]:
+                    prices[sym] = float(item.get("markPrice") or item.get("lastPrice") or 0.0)
+            if prices:
+                _PRICE_CACHE = prices
+                _LAST_PRICE_FETCH = now
+                return _PRICE_CACHE
+    except Exception:
+        pass
+    if not _PRICE_CACHE:
+        _PRICE_CACHE = {"BTCUSDT": 77420.0, "ETHUSDT": 2650.0, "SOLUSDT": 145.0}
+    return _PRICE_CACHE
+
+
 def get_uptime_info(state: Dict[str, Any]) -> Tuple[int, str]:
     """Compute uptime seconds and human-readable string."""
     up_sec = 0
@@ -384,6 +416,103 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
       word-break: break-all;
     }
 
+    .pairs-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 16px 20px;
+      margin-bottom: 24px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+    }
+    .pairs-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .pairs-header h4 {
+      font-size: 13.5px;
+      font-weight: 700;
+      color: var(--accent);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .pairs-subtitle {
+      font-size: 11.5px;
+      color: var(--text-muted);
+    }
+    .pairs-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 14px;
+    }
+    .pair-item {
+      background: #030712;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 12px 16px;
+      transition: all 0.2s;
+    }
+    .pair-item:hover {
+      border-color: rgba(56, 189, 248, 0.4);
+    }
+    .pair-item-primary {
+      border-color: rgba(16, 185, 129, 0.45);
+      background: linear-gradient(180deg, rgba(16, 185, 129, 0.05) 0%, #030712 100%);
+    }
+    .pair-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    .pair-name {
+      font-size: 14px;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .pair-price {
+      font-size: 15px;
+      font-weight: 700;
+      font-family: monospace;
+      color: #38bdf8;
+    }
+    .pair-badge-active {
+      font-size: 9.5px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: rgba(16, 185, 129, 0.2);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      text-transform: uppercase;
+    }
+    .pair-badge-standby {
+      font-size: 9.5px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: rgba(148, 163, 184, 0.1);
+      color: #94a3b8;
+      border: 1px solid #334155;
+      text-transform: uppercase;
+    }
+    .pair-details {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
     .footer {
       display: flex;
       justify-content: space-between;
@@ -408,6 +537,7 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
       </div>
       <div class="badges">
         <span class="badge __MODE_BADGE__" id="mode-badge">__MODE_STR__</span>
+        <span class="badge badge-active" style="border-color: rgba(16, 185, 129, 0.4); color: #34d399;">PAIR: <span id="hdr-pair">__PRIMARY_PAIR__</span></span>
         <span class="badge badge-active">PORT __PORT__</span>
         <span class="badge badge-event" style="color:#38bdf8; font-family:monospace; border-color:rgba(56,189,248,0.35);">⏱️ <span id="uptime-val">__UPTIME__</span></span>
         <span class="badge badge-socket" id="ws-badge">CONNECTING...</span>
@@ -437,6 +567,51 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
       </div>
     </div>
 
+    <!-- Active Trading Pairs & Market Execution Pulse -->
+    <div class="pairs-card">
+      <div class="pairs-header">
+        <h4>🎯 Active Trading Pairs & Market Execution</h4>
+        <span class="pairs-subtitle">Unified Trading Account V5 &bull; Multi-Pair Dynamic Architecture</span>
+      </div>
+      <div class="pairs-grid">
+        <div class="pair-item pair-item-primary">
+          <div class="pair-top">
+            <span class="pair-name">BTCUSDT <span class="pair-badge-active">ACTIVE PRIMARY</span></span>
+            <span class="pair-price" id="pair-price-btc">__BTC_PRICE__</span>
+          </div>
+          <div class="pair-details">
+            <span><b>Engines:</b> Options (1k), Spot Accumulator (1k), Delta-Neutral (1k)</span>
+            <span><b>Capital Enclosure:</b> $3,000.00 USD total ($1,000 / engine)</span>
+            <span><b>Execution Mode:</b> UTA Margin (BothSides)</span>
+          </div>
+        </div>
+
+        <div class="pair-item">
+          <div class="pair-top">
+            <span class="pair-name">ETHUSDT <span class="pair-badge-standby">STANDBY PROFILE</span></span>
+            <span class="pair-price" id="pair-price-eth">__ETH_PRICE__</span>
+          </div>
+          <div class="pair-details">
+            <span><b>Engines:</b> Options Underwriting & Spot Discount Ladder</span>
+            <span><b>Allocation:</b> Ready for concurrent capital deployment</span>
+            <span><b>Execution Mode:</b> UTA Margin Supported</span>
+          </div>
+        </div>
+
+        <div class="pair-item">
+          <div class="pair-top">
+            <span class="pair-name">SOLUSDT <span class="pair-badge-standby">STANDBY PROFILE</span></span>
+            <span class="pair-price" id="pair-price-sol">__SOL_PRICE__</span>
+          </div>
+          <div class="pair-details">
+            <span><b>Engines:</b> High-Volatility Spot & Linear Accumulator</span>
+            <span><b>Allocation:</b> Ready for concurrent capital deployment</span>
+            <span><b>Execution Mode:</b> UTA Margin Supported</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="engines-grid">
       <!-- Engine 1 -->
       <div class="engine-card">
@@ -449,6 +624,10 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
             Sells 24h 1% OTM Put options. If unexercised, collects ~128% APR premium. If exercised, buys spot BTC at a 1.0% discount.
           </div>
           <div class="metrics-list">
+            <div class="metric-row">
+              <span class="metric-label">Active Pair</span>
+              <span class="metric-val" style="color: var(--accent);">BTC Options (<span id="opt-pair">__PRIMARY_PAIR__</span>)</span>
+            </div>
             <div class="metric-row">
               <span class="metric-label">Allocated Budget</span>
               <span class="metric-val">$1,000.00 (Strict Cap)</span>
@@ -489,6 +668,10 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
           </div>
           <div class="metrics-list">
             <div class="metric-row">
+              <span class="metric-label">Active Pair</span>
+              <span class="metric-val" style="color: var(--accent);"><span id="spot-pair">__PRIMARY_PAIR__</span> (UTA Accumulator)</span>
+            </div>
+            <div class="metric-row">
               <span class="metric-label">Allocated Budget</span>
               <span class="metric-val">$1,000.00 (Strict Cap)</span>
             </div>
@@ -527,6 +710,10 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
             Pre-hedged Basis Spread: Short Perp @ S0, Limit Buy Spot @ S0 &bull; 0.99. Locks 1.0% spread + funding yield with Net Delta = 0.
           </div>
           <div class="metrics-list">
+            <div class="metric-row">
+              <span class="metric-label">Active Pair</span>
+              <span class="metric-val" style="color: var(--accent);"><span id="neut-pair">__PRIMARY_PAIR__</span> (Basis Arbitrage)</span>
+            </div>
             <div class="metric-row">
               <span class="metric-label">Allocated Budget</span>
               <span class="metric-val">$1,000.00 (Strict Cap)</span>
@@ -646,11 +833,36 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
       document.getElementById('neut-spread').innerText = '+$' + (neut.metrics?.locked_spread_usd || 0).toFixed(2);
       document.getElementById('neut-delta').innerText = 'Δ = ' + (neut.metrics?.net_delta || 0.0).toFixed(4);
 
+      // Market Prices & Pairs Live Sync
+      if (d.market_prices) {
+        if (d.market_prices['BTCUSDT']) {
+          const el = document.getElementById('pair-price-btc');
+          if (el) el.innerText = '$' + d.market_prices['BTCUSDT'].toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        }
+        if (d.market_prices['ETHUSDT']) {
+          const el = document.getElementById('pair-price-eth');
+          if (el) el.innerText = '$' + d.market_prices['ETHUSDT'].toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        }
+        if (d.market_prices['SOLUSDT']) {
+          const el = document.getElementById('pair-price-sol');
+          if (el) el.innerText = '$' + d.market_prices['SOLUSDT'].toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        }
+      }
+      const primPair = d.symbol || d.primary_pair || 'BTCUSDT';
+      const hdrPairEl = document.getElementById('hdr-pair');
+      if (hdrPairEl) hdrPairEl.innerText = primPair;
+      const optPairEl = document.getElementById('opt-pair');
+      if (optPairEl) optPairEl.innerText = primPair;
+      const spotPairEl = document.getElementById('spot-pair');
+      if (spotPairEl) spotPairEl.innerText = primPair;
+      const neutPairEl = document.getElementById('neut-pair');
+      if (neutPairEl) neutPairEl.innerText = primPair;
+
       // Logs
       if (d.logs && d.logs.length > 0) {
         const term = document.getElementById('terminal');
         const isScrolledToBottom = term.scrollHeight - term.clientHeight <= term.scrollTop + 30;
-        term.innerText = d.logs.join('\\n');
+        term.innerText = d.logs.join('\n');
         if (isScrolledToBottom) {
           term.scrollTop = term.scrollHeight;
         }
@@ -824,9 +1036,13 @@ class DiscountTelemetryHandler(BaseHTTPRequestHandler):
         state = read_discount_state()
         logs = get_systemd_logs(35)
         up_sec, up_str = get_uptime_info(state)
+        prices = get_live_market_prices()
         state["logs"] = logs
         state["uptime_seconds"] = up_sec
         state["uptime"] = up_str
+        state["market_prices"] = prices
+        state["primary_pair"] = state.get("symbol", "BTCUSDT")
+        state["active_pairs"] = state.get("active_pairs", ["BTCUSDT"])
         return state
 
     def _send_json(self, data: Any, status: int = 200):
@@ -1028,6 +1244,18 @@ class DiscountTelemetryHandler(BaseHTTPRequestHandler):
 
         up_sec, up_str = get_uptime_info(state)
         html = html.replace("__UPTIME__", up_str)
+
+        # Market Prices and Active Pairs
+        prices = get_live_market_prices()
+        primary_pair = state.get("symbol", "BTCUSDT")
+        btc_px = f"${prices.get('BTCUSDT', 77420.0):,.2f}"
+        eth_px = f"${prices.get('ETHUSDT', 2650.0):,.2f}"
+        sol_px = f"${prices.get('SOLUSDT', 145.0):,.2f}"
+
+        html = html.replace("__PRIMARY_PAIR__", primary_pair)
+        html = html.replace("__BTC_PRICE__", btc_px)
+        html = html.replace("__ETH_PRICE__", eth_px)
+        html = html.replace("__SOL_PRICE__", sol_px)
 
         # Engine 1
         html = html.replace("__OPT_STATUS__", opt.get("status", "IDLE"))

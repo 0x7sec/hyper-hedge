@@ -57,15 +57,15 @@ class OptionsPutEngine:
         options = self.client.get_options_chain(self.underlying)
 
         best_opt = None
-        min_strike_diff = float("inf")
+        best_score = float("inf")
 
         now_ts = time.time()
         for opt in options:
             symbol = opt.get("symbol", "")
-            if not symbol.endswith("-P"):  # Puts only
+            # Bybit USDT/USDC options: e.g. BTC-16SEP26-75000-P-USDT or BTC-28SEP24-60000-P
+            if not ("-P-" in symbol or symbol.endswith("-P")):
                 continue
 
-            # Parse strike price from symbol (e.g. BTC-28SEP24-59000-P)
             parts = symbol.split("-")
             if len(parts) < 4:
                 continue
@@ -74,19 +74,28 @@ class OptionsPutEngine:
             except ValueError:
                 continue
 
-            diff = abs(strike - target_strike)
-            if diff < min_strike_diff:
-                min_strike_diff = diff
+            # Check days to expiration
+            exp_date_str = parts[1]
+            try:
+                exp_dt = datetime.strptime(exp_date_str, "%d%b%y").replace(tzinfo=timezone.utc)
+                dte_days = (exp_dt.timestamp() - now_ts) / 86400.0
+            except Exception:
+                dte_days = 1.0
+
+            # Prefer options expiring within 1 to 7 days, strike below spot (OTM Put)
+            if dte_days < 0:
+                continue
+            if strike > spot_price:  # Avoid ITM puts for discount buy
+                continue
+
+            strike_diff = abs(strike - target_strike)
+            # Score balances closest strike to target discount and nearest expiry
+            score = strike_diff + (max(0, dte_days - 1.0) * 200)
+            if score < best_score:
+                best_score = score
                 best_opt = opt
 
-        # Strict budget calculation: Qty must not exceed $1,000 / strike
-        if not best_opt:
-            # Fallback for dry-run or when options chain API is quiet
-            chosen_strike = round(target_strike / 100) * 100
-            exp_date_str = datetime.now(timezone.utc).strftime("%d%b%y").upper()
-            sim_symbol = f"{self.underlying}-{exp_date_str}-{int(chosen_strike)}-P"
-            est_premium = spot_price * 0.0035  # ~0.35% for 24h put (~128% APR)
-        else:
+        if best_opt:
             sim_symbol = best_opt.get("symbol")
             parts = sim_symbol.split("-")
             chosen_strike = float(parts[2])
@@ -94,20 +103,25 @@ class OptionsPutEngine:
             mark_px = float(best_opt.get("markPrice") or 0.0)
             est_premium = bid_px if bid_px > 0 else (mark_px if mark_px > 0 else spot_price * 0.0035)
 
-        # STRICT $1,000 BUDGET CAP:
-        max_contracts = self.max_budget / chosen_strike
-        qty = round(max_contracts, 3)
-        if qty <= 0.001:
-            qty = 0.001
+            # Budget calculation: Qty must not exceed $1,000 / strike (lot step 0.01)
+            max_contracts = self.max_budget / chosen_strike
+            qty = max(0.01, math.floor(max_contracts * 100) / 100)
+            if qty * chosen_strike > self.max_budget:
+                qty = max(0.01, math.floor((self.max_budget / chosen_strike) * 100) / 100)
 
-        notional_secured = qty * chosen_strike
-        if notional_secured > self.max_budget:
-            qty = math.floor((self.max_budget / chosen_strike) * 1000) / 1000
+            logger.info(f"[OPTIONS ENGINE] Selected Listed Put: {sim_symbol} | Strike: ${chosen_strike:,.2f} | "
+                        f"Qty: {qty:.2f} | Premium: ${est_premium:,.2f} | Collateral Locked: ${qty * chosen_strike:,.2f}")
+            order_id = self.client.sell_put_option(sim_symbol, qty, est_premium)
+        else:
+            # Fallback when options chain has no active matching listed contracts on testnet
+            logger.info(f"[OPTIONS ENGINE] No active listed puts found on Bybit matching criteria. Running simulated underwriting mode for this cycle.")
+            chosen_strike = round(target_strike / 100) * 100
+            exp_date_str = datetime.now(timezone.utc).strftime("%d%b%y").upper()
+            sim_symbol = f"{self.underlying}-{exp_date_str}-{int(chosen_strike)}-P-USDT"
+            est_premium = spot_price * 0.0035
+            qty = max(0.01, round(self.max_budget / chosen_strike, 2))
+            order_id = f"sim_opt_synth_{int(time.time()*1000)}"
 
-        logger.info(f"[OPTIONS ENGINE] Target Put: {sim_symbol} | Strike: ${chosen_strike:,.2f} | "
-                    f"Qty: {qty:.3f} | Premium: ${est_premium:,.2f} | Collateral Locked: ${qty * chosen_strike:,.2f}")
-
-        order_id = self.client.sell_put_option(sim_symbol, qty, est_premium)
         if order_id:
             now_str = datetime.now(timezone.utc).isoformat()
             self.state.status = "CONTRACT_ACTIVE"

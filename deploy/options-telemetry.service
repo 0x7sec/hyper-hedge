@@ -1,0 +1,27 @@
+[Unit]
+Description=Bybit Options Harvester Telemetry Server (Port 8083)
+After=network.target network-online.target time-sync.target
+Wants=network-online.target time-sync.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/root/hyper_hedge_research
+EnvironmentFile=/root/hyper_hedge_research/.env
+ExecStart=/root/hyper_hedge_research/venv/bin/python options_telemetry_server.py
+Restart=always
+RestartSec=5
+
+# Resource governance & crash resilience
+LimitNOFILE=65535
+TimeoutStopSec=15
+KillMode=process
+
+# Logging: routed to systemd journal
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=options-telemetry
+
+[Install]
+WantedBy=multi-user.target

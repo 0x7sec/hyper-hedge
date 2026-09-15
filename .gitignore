@@ -29,6 +29,7 @@ dist/
 bot_state.json*
 amd_bot_state.json*
 discount_state.json*
+options_bot_state.json*
 
 # ── Operating System & IDEs ───────────────────────────────────────────────────
 .DS_Store

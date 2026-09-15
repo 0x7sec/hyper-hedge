@@ -128,11 +128,32 @@ To rigorously test execution efficiency, slippage, and market neutrality, the sy
 
 ---
 
-## 5. Telemetry & Dashboard Integration
+---
 
-The live telemetry server (`telemetry_server.py`) running on the VPS on port 8080 will be extended to track:
-* Real-time capital balance for each of the 3 engines (starting at $\$1,000$ each).
-* Active discount limit orders and strike prices.
-* Live hedge deltas and funding fees collected (Engine 3).
-* Options greeks and expiration countdown (Engine 1).
-* Aggregated trade audit log and Sharpe ratio tracking.
+## 5. Telemetry & Dashboard Integration (Port 8082)
+
+The dedicated Discount Suite WebSocket Telemetry Server (`discount_telemetry_server.py`) operates on **Port 8082** on the production VPS:
+* **Dashboard URL:** `http://<VPS_IP>:8082/dashboard?password=<TELEMETRY_PASSWORD>`
+* **Real-time WebSocket:** `ws://<VPS_IP>:8082/ws?password=<TELEMETRY_PASSWORD>` (1.5s RFC 6455 live sync)
+* **AI Summary Endpoint:** `http://<VPS_IP>:8082/api/ai-summary?password=<TELEMETRY_PASSWORD>`
+* **Metrics Displayed:**
+  - Real-time capital balance for each of the 3 engines (starting at $\$1,000$ each, $\$3,000$ total suite enclosure).
+  - Active discount limit orders and strike prices across Engine 1, 2, and 3.
+  - Live hedge deltas and locked basis spread (Engine 3).
+  - Real-time trade audit ledger.
+
+---
+
+## 6. Architectural Relationship to the Standalone Options Harvester (Port 8083)
+
+It is critical to distinguish between Engine 3 of this suite and the standalone **Bybit UTA Delta-Neutral Options Harvester**:
+
+| Strategy Dimension | Discount Suite Engine 3 (`bybit_discount_bot`) | Standalone Options Harvester (`options_harvester`) |
+| :--- | :--- | :--- |
+| **Strategy Document** | [`discount_buy_strategy_note.md`](file:///c:/Users/x000sec/Desktop/Projects/hyper_hedge_research/discount_buy_strategy_note.md) | [`DELTA_NEUTRAL_OPTIONS_STRATEGY.md`](file:///c:/Users/x000sec/Desktop/Projects/hyper_hedge_research/DELTA_NEUTRAL_OPTIONS_STRATEGY.md) |
+| **Instruments Traded** | Spot Limit Buy + Linear Perpetual Short | Short OTM Put + Short OTM Call (Strangle) + Linear Perp DDH |
+| **Alpha Driver** | Microstructure dip discount + Spot-Perp basis spread | Options Volatility Risk Premium (VRP) & Theta ($\Theta$) time decay |
+| **Port / Telemetry** | **Port 8082** (`discount-telemetry`) | **Port 8083** (`options-telemetry`) |
+| **Capital Enclosure** | **$1,000.00 USD strict** | **$1,000.00 USD strict** |
+| **Defense Mechanism** | Atomic $1\times$ short hedge at fill | Automated Dynamic Delta Hedging (DDH) & 2.0x Premium Stop Loss |
+

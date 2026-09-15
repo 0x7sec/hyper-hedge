@@ -213,9 +213,46 @@ stateDiagram-v2
 
 ---
 
-## 8. Next Steps & Implementation Roadmap
+---
 
-1. **Step 1: Module Scaffold**: Build `options_harvester/` within the current workspace utilizing the verified Bybit V5 options client.
-2. **Step 2: Dry-Run Simulation**: Run real-time simulation on live WebSocket options ticker feed to log delta drift and verify the DDH micro-hedge trigger logic.
-3. **Step 3: Port 8083 Telemetry Server**: Deploy an authenticated visual dashboard displaying the active Strangle range cone, Greek delta meter, and theta accumulation.
-4. **Step 4: VPS Daemon Deployment**: Configure systemd service `bybit-options-harvester.service` alongside the existing hedging and discount suites on the production VPS.
+## 8. Production Deployment & Operational Runbook
+
+The autonomous daemon and telemetry suite are deployed with a strict **$1,000 USD Capital Enclosure**, running concurrently on the Debian VPS alongside the Hedge Bot ($1,000), AMD Bot ($1,000), and Discount Buy Suite ($1,000/engine).
+
+### 8.1 Production Hyperparameters & Risk Rules
+
+| Parameter | Production Value | Enforcement Mechanism |
+| :--- | :--- | :--- |
+| **Allocated Capital** | **$1,000.00 USD strict** | Enforced at engine boot via `ALLOCATED_CAPITAL = 1000.0` |
+| **Max Portfolio Drawdown** | **5.0% ($50.00 USD)** | Emergency circuit breaker (`STATE_6_CIRCUIT_BREAKER`), 4h halt |
+| **Hard Stop Loss** | **2.0x collected premium** | Liquidates leg at market if mark price surges to $\ge 2.0 \cdot P_0$ |
+| **Profit Harvest Target** | **70% Theta Decay** | Closes strangle early when combined mark decays past 70% |
+| **Defensive Roll Target** | **85% Decay** | Rolls winning leg closer to spot to re-center delta and bank cash |
+| **Gamma Pin Avoidance** | **T-120 minutes** | Mandatory closure 2 hours prior to 08:00 UTC settlement |
+| **DDH Rebalance Band** | **$|\Delta_{\text{net}}| > 0.10$** | Fires micro-perp rebalance or rolls leg to reset $\Delta \approx 0.00$ |
+| **Target DTE Window** | **18h - 72h (ideal 24h)** | Daily options settlement cycle on Bybit UTA |
+| **Order Tagging** | `opt_strangle_...`, `opt_ddh_...` | Zero order collisions with linear hedge bots |
+
+### 8.2 Live Telemetry Endpoints (Port 8083)
+
+| Resource | URL | Description |
+| :--- | :--- | :--- |
+| **Live Visual Dashboard** | `http://<VPS_IP>:8083/dashboard?password=<SECRET>` | Dark-mode UI with live Range Cone & Greek gauges |
+| **WebSocket Stream** | `ws://<VPS_IP>:8083/ws?password=<SECRET>` | 1.5s RFC 6455 real-time delta & mark price stream |
+| **AI Status Summary API** | `http://<VPS_IP>:8083/api/ai-summary?password=<SECRET>` | Markdown summary (~400 tokens) for LLMs & AI agents |
+| **JSON Status API** | `http://<VPS_IP>:8083/api/status?password=<SECRET>` | Full state payload including active legs & Greeks |
+| **Sanitized Error Logs** | `http://<VPS_IP>:8083/api/logs?lines=50&password=<SECRET>` | Real-time logs with credentials redacted |
+
+### 8.3 Systemd Management on Production VPS
+
+```bash
+# Check service statuses
+systemctl status bybit-options-harvester options-telemetry
+
+# Follow live options harvester logs
+journalctl -u bybit-options-harvester -f
+
+# Restart options suite
+systemctl restart bybit-options-harvester options-telemetry
+```
+

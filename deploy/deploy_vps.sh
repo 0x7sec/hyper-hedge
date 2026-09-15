@@ -286,9 +286,68 @@ SyslogIdentifier=discount-telemetry
 WantedBy=multi-user.target
 DISTELEMSERVICE
 
+# 7. Bybit UTA Delta-Neutral Options Harvester ($1,000 USD Capital Enclosure)
+$SUDO tee /etc/systemd/system/bybit-options-harvester.service > /dev/null << OPTSERVICE
+[Unit]
+Description=Bybit UTA Delta-Neutral Options Harvester & DDH Engine (1000 USD Capital Enclosure)
+After=network.target network-online.target time-sync.target
+Wants=network-online.target time-sync.target
+
+[Service]
+Type=simple
+User=$CURRENT_USER
+Group=$CURRENT_GROUP
+WorkingDirectory=$APP_DIR
+EnvironmentFile=$APP_DIR/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=$APP_DIR/venv/bin/python -u run_options_harvester.py --dry-run
+Restart=always
+RestartSec=10
+
+LimitNOFILE=65535
+TimeoutStopSec=30
+KillMode=process
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bybit-options-harvester
+
+[Install]
+WantedBy=multi-user.target
+OPTSERVICE
+
+# 8. Bybit Options Harvester Telemetry Server (Port 8083)
+$SUDO tee /etc/systemd/system/options-telemetry.service > /dev/null << OPTTELEMSERVICE
+[Unit]
+Description=Bybit Options Harvester Telemetry Server (Port 8083)
+After=network.target network-online.target time-sync.target
+Wants=network-online.target time-sync.target
+
+[Service]
+Type=simple
+User=$CURRENT_USER
+Group=$CURRENT_GROUP
+WorkingDirectory=$APP_DIR
+EnvironmentFile=$APP_DIR/.env
+ExecStart=$APP_DIR/venv/bin/python options_telemetry_server.py
+Restart=always
+RestartSec=5
+
+LimitNOFILE=65535
+TimeoutStopSec=15
+KillMode=process
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=options-telemetry
+
+[Install]
+WantedBy=multi-user.target
+OPTTELEMSERVICE
+
 # Configure Logrotate for trade audit CSVs
 $SUDO tee /etc/logrotate.d/bybit-bot > /dev/null << LOGROT
-$APP_DIR/bybit_trades.csv $APP_DIR/amd_trades.csv {
+$APP_DIR/bybit_trades.csv $APP_DIR/amd_trades.csv $APP_DIR/options_trades.csv {
     weekly
     missingok
     rotate 12
@@ -300,13 +359,14 @@ $APP_DIR/bybit_trades.csv $APP_DIR/amd_trades.csv {
 LOGROT
 $SUDO chmod 644 /etc/logrotate.d/bybit-bot
 
-# Open firewall ports 8080, 8081, and 8082 if UFW is active
+# Open firewall ports 8080, 8081, 8082, and 8083 if UFW is active
 if command -v ufw >/dev/null 2>&1; then
   if $SUDO ufw status | grep -q "Status: active"; then
-    echo "Opening ports 8080, 8081, and 8082 in UFW firewall..."
+    echo "Opening ports 8080, 8081, 8082, and 8083 in UFW firewall..."
     $SUDO ufw allow 8080/tcp comment 'Bybit Trend Telemetry API' || true
     $SUDO ufw allow 8081/tcp comment 'Bybit AMD Telemetry API' || true
     $SUDO ufw allow 8082/tcp comment 'Bybit Discount Telemetry API' || true
+    $SUDO ufw allow 8083/tcp comment 'Bybit Options Telemetry API' || true
   fi
 fi
 
@@ -318,8 +378,8 @@ echo "=== Pre-caching Historical Kline Data for Research Suite ==="
 $SUDO systemctl daemon-reload
 $SUDO systemctl stop bybit-bot || true
 $SUDO systemctl disable bybit-bot || true
-$SUDO systemctl enable bybit-telemetry amd-bot amd-telemetry bybit-discount discount-telemetry
-$SUDO systemctl restart bybit-telemetry amd-bot amd-telemetry bybit-discount discount-telemetry
+$SUDO systemctl enable bybit-telemetry amd-bot amd-telemetry bybit-discount discount-telemetry bybit-options-harvester options-telemetry
+$SUDO systemctl restart bybit-telemetry amd-bot amd-telemetry bybit-discount discount-telemetry bybit-options-harvester options-telemetry
 
 echo "=== [6/6] Verifying Daemon Status ==="
 sleep 3
@@ -329,17 +389,21 @@ VPS_IP=$(curl -s -4 ifconfig.me 2>/dev/null || curl -s -4 icanhazip.com 2>/dev/n
 echo "=============================================================================="
 echo ">>> SUCCESS: All Bots & Telemetry Services ACTIVE on VPS! <<<"
 echo "=============================================================================="
-echo "  • bybit-telemetry.service    : ACTIVE (Trend Dashboard on Port 8080)"
-echo "  • amd-bot.service            : ACTIVE (Macro AMD + FVG Bot Engine)"
-echo "  • amd-telemetry.service      : ACTIVE (AMD Dashboard on Port 8081)"
-echo "  • bybit-discount.service     : ACTIVE (Discount Buy 3-Engine Suite)"
-echo "  • discount-telemetry.service : ACTIVE (Discount Dashboard on Port 8082)"
+echo "  • bybit-telemetry.service        : ACTIVE (Trend Dashboard on Port 8080)"
+echo "  • amd-bot.service                : ACTIVE (Macro AMD + FVG Bot Engine)"
+echo "  • amd-telemetry.service          : ACTIVE (AMD Dashboard on Port 8081)"
+echo "  • bybit-discount.service         : ACTIVE (Discount Buy 3-Engine Suite)"
+echo "  • discount-telemetry.service     : ACTIVE (Discount Dashboard on Port 8082)"
+echo "  • bybit-options-harvester.service: ACTIVE (Delta-Neutral Options Harvester)"
+echo "  • options-telemetry.service      : ACTIVE (Options Dashboard on Port 8083)"
 echo "------------------------------------------------------------------------------"
 echo "📊 Trend Bot Dashboard        : http://${VPS_IP}:8080/dashboard?password=${FINAL_TPASS}"
 echo "⚡ AMD Bot Dashboard          : http://${VPS_IP}:8081/dashboard?password=${FINAL_TPASS}"
 echo "🎯 Discount Buy Dashboard     : http://${VPS_IP}:8082/dashboard?password=${FINAL_TPASS}"
-echo "🤖 Discount AI Summary API    : http://${VPS_IP}:8082/api/ai-summary?password=${FINAL_TPASS}"
+echo "🛡️ Options Harvester Dashboard : http://${VPS_IP}:8083/dashboard?password=${FINAL_TPASS}"
+echo "🤖 Options AI Summary API     : http://${VPS_IP}:8083/api/ai-summary?password=${FINAL_TPASS}"
 echo "🔑 Access Password            : ${FINAL_TPASS}"
 echo "=============================================================================="
-$SUDO systemctl status bybit-telemetry amd-bot amd-telemetry bybit-discount discount-telemetry --no-pager
+$SUDO systemctl status bybit-telemetry amd-bot amd-telemetry bybit-discount discount-telemetry bybit-options-harvester options-telemetry --no-pager
+
 

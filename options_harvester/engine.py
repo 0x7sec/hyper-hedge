@@ -205,6 +205,39 @@ class OptionsHarvesterEngine:
         except Exception as e:
             logger.error(f"Error writing to trades CSV: {e}")
 
+    def _reconcile_open_positions_with_exchange(self) -> None:
+        """Verify that active strangle legs actually exist on Bybit exchange."""
+        if self.client.dry_run or not self.client.session:
+            return
+
+        try:
+            res = self.client.session.get_positions(category="option", baseCoin="BTC")
+            if res.get("retCode") == 0:
+                open_positions = {
+                    p.get("symbol"): float(p.get("size", 0.0))
+                    for p in res.get("result", {}).get("list", [])
+                    if float(p.get("size", 0.0)) > 0
+                }
+
+                # If in HARVESTING or DEPLOYING, verify legs exist on Bybit
+                if self.state in ("STATE_1_DEPLOYING", "STATE_2_HARVESTING"):
+                    p_sym = self.active_put.get("symbol") if self.active_put else None
+                    c_sym = self.active_call.get("symbol") if self.active_call else None
+
+                    # If missing from Bybit, reset to SCANNING to place live orders
+                    if not p_sym or not c_sym or (p_sym not in open_positions and c_sym not in open_positions):
+                        logger.warning(
+                            f"[RECONCILE] Active strangle legs (Put: {p_sym}, Call: {c_sym}) NOT found in Bybit positions: {list(open_positions.keys())}. "
+                            f"Resetting to STATE_0_SCANNING to deploy authentic exchange orders."
+                        )
+                        self.state = "STATE_0_SCANNING"
+                        self.active_put = None
+                        self.active_call = None
+                        self.initial_net_premium = 0.0
+                        self._save_state()
+        except Exception as e:
+            logger.error(f"Error reconciling options positions with Bybit: {e}")
+
     # ── Main Tick Execution Loop ─────────────────────────────────────────────
 
     def tick(self, spot_price: Optional[float] = None) -> Dict[str, Any]:
@@ -215,6 +248,9 @@ class OptionsHarvesterEngine:
         now = time.time()
         if spot_price is None or spot_price <= 0:
             spot_price = self.client.get_perp_price("BTCUSDT")
+
+        # 0. Exchange position reconciliation guard
+        self._reconcile_open_positions_with_exchange()
 
         # 1. Circuit breaker cooldown check
         if self.circuit_breaker_active:

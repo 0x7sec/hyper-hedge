@@ -170,6 +170,25 @@ class OptionsHarvesterEngine:
                 self.initial_net_premium = 0.0
                 self.last_status_message = "Switched to LIVE mode. Scanning Bybit options chain for authentic execution..."
 
+            # In live mode, verify that loaded active positions actually exist on the exchange
+            if not self.client.dry_run and self.state in ("STATE_2_HARVESTING", "STATE_3_DDH_REBALANCING"):
+                open_map = self.client.get_open_positions_map(base_coin="BTC")
+                p_sym = self.active_put.get("symbol") if self.active_put else None
+                c_sym = self.active_call.get("symbol") if self.active_call else None
+                p_exists = (p_sym in open_map and open_map[p_sym]["side"] == "Sell" and open_map[p_sym]["size"] > 0)
+                c_exists = (c_sym in open_map and open_map[c_sym]["side"] == "Sell" and open_map[c_sym]["size"] > 0)
+                if not (p_exists and c_exists):
+                    logger.warning(
+                        f"[BOOT RECONCILE] Loaded legs ({p_sym}: {p_exists}, {c_sym}: {c_exists}) not open on exchange. "
+                        f"Resetting state to STATE_0_SCANNING."
+                    )
+                    self.client.cancel_option_orders()
+                    self.state = "STATE_0_SCANNING"
+                    self.active_put = None
+                    self.active_call = None
+                    self.initial_net_premium = 0.0
+                    self.last_status_message = "Boot state reconciled with exchange: Resetting to SCANNING."
+
             logger.info(f"Loaded options harvester state: {self.state} | Cycle {self.cycle_id} | Live: {not self.client.dry_run}")
         except Exception as e:
             logger.error(f"Error loading state from {self.state_file}: {e}")
@@ -211,48 +230,44 @@ class OptionsHarvesterEngine:
             logger.error(f"Error writing to trades CSV: {e}")
 
     def _reconcile_open_positions_with_exchange(self, now: float) -> None:
-        """Verify that active strangle legs actually exist on Bybit exchange."""
+        """Verify that active strangle legs actually exist as real open short positions on Bybit."""
         if self.client.dry_run or not self.client.session:
             return
 
-        # Only reconcile after positions have been deployed and in HARVESTING state
-        if self.state != "STATE_2_HARVESTING":
+        # Only reconcile after positions have been deployed and in HARVESTING or DDH state
+        if self.state not in ("STATE_2_HARVESTING", "STATE_3_DDH_REBALANCING"):
             return
 
-        # Give a 30s grace period after deployment for orders to settle or rest
-        if (now - self.cycle_start_time) < 30.0:
+        # Give a 15s grace period after deployment for settlement
+        if (now - self.cycle_start_time) < 15.0:
             return
 
         try:
-            res_pos = self.client.session.get_positions(category="option", baseCoin="BTC")
-            open_positions = {
-                p.get("symbol"): float(p.get("size", 0.0))
-                for p in res_pos.get("result", {}).get("list", [])
-                if float(p.get("size", 0.0)) > 0
-            } if res_pos.get("retCode") == 0 else {}
-
-            res_ord = self.client.session.get_open_orders(category="option", baseCoin="BTC")
-            open_orders = {
-                o.get("symbol")
-                for o in res_ord.get("result", {}).get("list", [])
-            } if res_ord.get("retCode") == 0 else set()
+            open_map = self.client.get_open_positions_map(base_coin="BTC")
 
             p_sym = self.active_put.get("symbol") if self.active_put else None
             c_sym = self.active_call.get("symbol") if self.active_call else None
 
-            p_active = (p_sym in open_positions) or (p_sym in open_orders)
-            c_active = (c_sym in open_positions) or (c_sym in open_orders)
+            p_active = bool(p_sym and p_sym in open_map and open_map[p_sym].get("side") == "Sell" and open_map[p_sym].get("size", 0) > 0)
+            c_active = bool(c_sym and c_sym in open_map and open_map[c_sym].get("side") == "Sell" and open_map[c_sym].get("size", 0) > 0)
 
-            # If legs were not found in either open positions or open orders on Bybit, reset to SCANNING
-            if not p_active and not c_active:
+            # If either leg is missing on Bybit exchange, clean up and reset to SCANNING
+            if not (p_active and c_active):
                 logger.warning(
-                    f"[RECONCILE] Active strangle legs (Put: {p_sym}, Call: {c_sym}) NOT found on Bybit. "
-                    f"Resetting to STATE_0_SCANNING to deploy authentic exchange orders."
+                    f"[RECONCILE] Strangle legs (Put {p_sym}: {p_active}, Call {c_sym}: {c_active}) not fully intact on Bybit. "
+                    f"Cancelling open orders and resetting to STATE_0_SCANNING."
                 )
+                self.client.cancel_option_orders()
+                if p_active:
+                    self.client.close_option_leg(p_sym, BASE_ORDER_QTY, reason="RECONCILE_UNPAIRED_LEG")
+                if c_active:
+                    self.client.close_option_leg(c_sym, BASE_ORDER_QTY, reason="RECONCILE_UNPAIRED_LEG")
+
                 self.state = "STATE_0_SCANNING"
                 self.active_put = None
                 self.active_call = None
                 self.initial_net_premium = 0.0
+                self.last_status_message = "Reconciled with exchange: Reset to scan for fresh delta-neutral pair."
                 self._save_state()
         except Exception as e:
             logger.error(f"Error reconciling options positions with Bybit: {e}")
@@ -341,13 +356,44 @@ class OptionsHarvesterEngine:
         c_sym = self.active_call["symbol"]
         c_px = self.active_call["entry_price"]
 
-        logger.info(f"[DEPLOYING STRANGLE] Selling {BASE_ORDER_QTY} {p_sym} @ ${p_px} and {BASE_ORDER_QTY} {c_sym} @ ${c_px}")
+        logger.info(f"[DEPLOYING STRANGLE] Selling {BASE_ORDER_QTY} {p_sym} and {BASE_ORDER_QTY} {c_sym} via Market Order")
 
-        p_order = self.client.sell_option_leg(symbol=p_sym, qty=BASE_ORDER_QTY, price=p_px, tag="put")
-        c_order = self.client.sell_option_leg(symbol=c_sym, qty=BASE_ORDER_QTY, price=c_px, tag="call")
+        p_order = self.client.sell_option_leg(symbol=p_sym, qty=BASE_ORDER_QTY, price=p_px, tag="put", order_type="Market")
+        c_order = self.client.sell_option_leg(symbol=c_sym, qty=BASE_ORDER_QTY, price=c_px, tag="call", order_type="Market")
 
         if p_order and c_order:
             now = time.time()
+            # In live mode, verify exchange fill confirmation
+            if not self.client.dry_run:
+                time.sleep(1.0)
+                open_map = self.client.get_open_positions_map()
+                p_filled = bool(p_sym in open_map and open_map[p_sym].get("side") == "Sell" and open_map[p_sym].get("size", 0) > 0)
+                c_filled = bool(c_sym in open_map and open_map[c_sym].get("side") == "Sell" and open_map[c_sym].get("size", 0) > 0)
+
+                if not (p_filled and c_filled):
+                    logger.warning(
+                        f"[DEPLOY INCOMPLETE] Put filled: {p_filled}, Call filled: {c_filled}. "
+                        f"Cancelling open orders and rolling back to preserve delta neutrality."
+                    )
+                    self.client.cancel_option_orders()
+                    if p_filled:
+                        self.client.close_option_leg(p_sym, BASE_ORDER_QTY, reason="INCOMPLETE_DEPLOYMENT_ROLLBACK")
+                    if c_filled:
+                        self.client.close_option_leg(c_sym, BASE_ORDER_QTY, reason="INCOMPLETE_DEPLOYMENT_ROLLBACK")
+                    self.active_put = None
+                    self.active_call = None
+                    self.state = "STATE_0_SCANNING"
+                    self.last_status_message = "Deployment incomplete on exchange. Unwound partial leg to maintain delta neutrality."
+                    self._save_state()
+                    return
+
+                # Update entry prices from actual exchange fill
+                if open_map[p_sym].get("avg_price", 0.0) > 0:
+                    self.active_put["entry_price"] = open_map[p_sym]["avg_price"]
+                if open_map[c_sym].get("avg_price", 0.0) > 0:
+                    self.active_call["entry_price"] = open_map[c_sym]["avg_price"]
+                self.initial_net_premium = (self.active_put["entry_price"] + self.active_call["entry_price"]) * BASE_ORDER_QTY
+
             self.cycle_start_time = now
             self.active_put["active"] = True
             self.active_put["order_id"] = p_order
@@ -358,8 +404,10 @@ class OptionsHarvesterEngine:
 
             self.state = "STATE_2_HARVESTING"
             self.last_status_message = (
-                f"Strangle deployed and active! Harvest target: 70% decay | "
-                f"Stop Loss: 2.0x premium (${p_px*PREMIUM_STOP_LOSS_MULT:,.0f} / ${c_px*PREMIUM_STOP_LOSS_MULT:,.0f})"
+                f"Strangle deployed and verified on Bybit! Harvest target: 70% decay | "
+                f"Entry: Put ${self.active_put['entry_price']:.0f} / Call ${self.active_call['entry_price']:.0f} | "
+                f"Stop Loss: 2.0x premium (${self.active_put['entry_price']*PREMIUM_STOP_LOSS_MULT:,.0f} / "
+                f"${self.active_call['entry_price']*PREMIUM_STOP_LOSS_MULT:,.0f})"
             )
             logger.info(self.last_status_message)
         else:

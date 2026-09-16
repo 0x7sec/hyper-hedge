@@ -217,6 +217,21 @@ class TestOptionsHarvester(unittest.TestCase):
         self.assertTrue(self.engine.circuit_breaker_active)
         self.assertEqual(self.engine.state, "STATE_6_CIRCUIT_BREAKER")
 
+    def test_client_order_cancellation_and_position_guards(self):
+        """Verify client order cancellation and protection against zero-size buybacks."""
+        # Cancel order test
+        self.assertTrue(self.client.cancel_option_orders("BTC-TEST-73000-P-USDT"))
+        self.assertTrue(self.client.cancel_option_orders())
+
+        # Close leg in dry run should succeed
+        self.assertTrue(self.client.close_option_leg("BTC-TEST-73000-P-USDT", 0.01))
+
+        # Test sell option leg with market and limit order types
+        order_mkt = self.client.sell_option_leg("BTC-TEST-73000-P-USDT", 0.01, 100.0, order_type="Market")
+        self.assertIsNotNone(order_mkt)
+        order_lmt = self.client.sell_option_leg("BTC-TEST-79000-C-USDT", 0.01, 100.0, order_type="Limit")
+        self.assertIsNotNone(order_lmt)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -137,8 +137,8 @@ class StrangleScanner:
                     ask_px = float(t.get("ask1Price") or 0.0)
                     iv = float(t.get("markIv") or 0.0)
 
-                    # Option must have positive mark price
-                    if mark_px <= 0:
+                    # Option must have positive mark price and active orderbook liquidity (bid >= 10.0 and valid ask)
+                    if mark_px <= 0 or bid_px < 10.0 or ask_px <= 0 or ask_px < bid_px:
                         continue
 
                     # Filter Put within delta window

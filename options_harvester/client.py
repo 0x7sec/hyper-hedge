@@ -125,16 +125,56 @@ class BybitOptionsClient:
 
     # ── Options Order Execution ──────────────────────────────────────────────
 
+    def cancel_option_orders(self, symbol: Optional[str] = None, base_coin: str = "BTC") -> bool:
+        """Cancel resting option orders to prevent hanging orders and orphans."""
+        if self.dry_run or not self.session:
+            return True
+        try:
+            if symbol:
+                res = self.session.cancel_all_orders(category="option", symbol=symbol)
+            else:
+                res = self.session.cancel_all_orders(category="option", baseCoin=base_coin)
+            if res.get("retCode") == 0:
+                logger.info(f"[OPTIONS CANCEL] Cancelled open orders for {symbol or base_coin}")
+                return True
+            else:
+                logger.warning(f"Error cancelling option orders: {res.get('retMsg')}")
+        except Exception as e:
+            logger.error(f"Exception cancelling option orders: {e}")
+        return False
+
+    def get_open_positions_map(self, base_coin: str = "BTC") -> Dict[str, Dict[str, Any]]:
+        """Fetch dictionary of currently open option positions on Bybit exchange."""
+        if self.dry_run or not self.session:
+            return {}
+        try:
+            res = self.session.get_positions(category="option", baseCoin=base_coin)
+            if res.get("retCode") == 0:
+                return {
+                    p["symbol"]: {
+                        "side": p["side"],
+                        "size": float(p.get("size", 0.0)),
+                        "avg_price": float(p.get("avgPrice", 0.0)),
+                        "mark_price": float(p.get("markPrice", 0.0)),
+                    }
+                    for p in res.get("result", {}).get("list", [])
+                    if float(p.get("size", 0.0)) > 0
+                }
+        except Exception as e:
+            logger.error(f"Error fetching open option positions map: {e}")
+        return {}
+
     def sell_option_leg(
         self,
         symbol: str,
         qty: float,
         price: float,
         tag: str = "strangle",
+        order_type: str = "Market",
     ) -> Optional[str]:
         """
-        Sell an option leg (Short Put or Short Call) with tick size formatting.
-        Uses Post-Only Limit order to capture maker rebate / avoid taker fees.
+        Sell an option leg (Short Put or Short Call).
+        Defaults to order_type="Market" for immediate fill into top bid without leaving hanging resting orders.
         """
         order_id = f"opt_{tag}_{int(time.time()*1000)}_{self._order_counter}"
         self._order_counter += 1
@@ -161,19 +201,22 @@ class BybitOptionsClient:
             return order_id
 
         try:
-            px_str = str(int(formatted_price)) if formatted_price.is_integer() else str(formatted_price)
-            res = self.session.place_order(
-                category="option",
-                symbol=symbol,
-                side="Sell",
-                orderType="Limit",
-                qty=str(formatted_qty),
-                price=px_str,
-                orderLinkId=order_id,
-            )
+            params: Dict[str, Any] = {
+                "category": "option",
+                "symbol": symbol,
+                "side": "Sell",
+                "orderType": order_type,
+                "qty": str(formatted_qty),
+                "orderLinkId": order_id,
+            }
+            if order_type == "Limit":
+                px_str = str(int(formatted_price)) if formatted_price.is_integer() else str(formatted_price)
+                params["price"] = px_str
+
+            res = self.session.place_order(**params)
             if res.get("retCode") == 0:
                 real_id = res["result"].get("orderId", order_id)
-                logger.info(f"[LIVE OPTION] Sold {symbol} | ID: {real_id} | {formatted_qty:.2f} @ ${formatted_price:,.2f}")
+                logger.info(f"[LIVE OPTION] Sold {symbol} | Type: {order_type} | ID: {real_id} | {formatted_qty:.2f}")
                 return real_id
             else:
                 logger.warning(f"Bybit Option Order error: {res.get('retMsg')} (code {res.get('retCode')})")
@@ -190,7 +233,11 @@ class BybitOptionsClient:
     ) -> bool:
         """
         Close an open short option leg by buying it back.
-        Uses Marketable Limit or Market order for rapid closure.
+        Guarantees:
+        1. Cancels any resting orders for the symbol first.
+        2. Queries exchange position to verify short position actually exists.
+           If position size is 0, skips placing order to avoid accidentally opening a Long position.
+        3. If an accidental Long existed, flattens it.
         """
         order_id = f"opt_close_{int(time.time()*1000)}_{self._order_counter}"
         self._order_counter += 1
@@ -203,25 +250,52 @@ class BybitOptionsClient:
             return True
 
         try:
+            # 1. Cancel any resting orders for this symbol first
+            self.cancel_option_orders(symbol=symbol)
+
+            # 2. Check actual open position size on Bybit
+            res_pos = self.session.get_positions(category="option", symbol=symbol)
+            live_size = 0.0
+            live_side = ""
+            if res_pos.get("retCode") == 0:
+                for p in res_pos.get("result", {}).get("list", []):
+                    if p.get("symbol") == symbol:
+                        live_size = float(p.get("size", 0.0))
+                        live_side = p.get("side", "")
+                        break
+
+            # If no open short position exists on exchange, do NOT submit a Buy order
+            if live_size <= 0:
+                logger.info(f"[LIVE OPTION CLOSE] No open position found for {symbol} on Bybit (size=0). Skipping buyback to prevent unintended Long.")
+                return True
+
+            if live_side == "Buy":
+                logger.warning(f"[LIVE OPTION CLOSE] Existing position for {symbol} is already Long! Flattening with Market Sell.")
+                self.session.place_order(
+                    category="option",
+                    symbol=symbol,
+                    side="Sell",
+                    orderType="Market",
+                    qty=str(live_size),
+                    orderLinkId=order_id,
+                )
+                return True
+
+            # Use actual live short size if smaller than requested qty
+            exec_qty = min(formatted_qty, live_size)
+
             params: Dict[str, Any] = {
                 "category": "option",
                 "symbol": symbol,
                 "side": "Buy",
-                "qty": str(formatted_qty),
+                "orderType": "Market",
+                "qty": str(exec_qty),
                 "orderLinkId": order_id,
             }
-            if price is not None and price > 0:
-                tick_size = 5.0 if "BTC" in symbol else 0.5
-                formatted_price = max(tick_size, round(price / tick_size) * tick_size)
-                px_str = str(int(formatted_price)) if formatted_price.is_integer() else str(formatted_price)
-                params["orderType"] = "Limit"
-                params["price"] = px_str
-            else:
-                params["orderType"] = "Market"
 
             res = self.session.place_order(**params)
             if res.get("retCode") == 0:
-                logger.info(f"[LIVE OPTION CLOSE] Closed {symbol} | Reason: {reason}")
+                logger.info(f"[LIVE OPTION CLOSE] Closed short {symbol} ({exec_qty:.2f}) | Reason: {reason}")
                 return True
             else:
                 logger.error(f"Error closing option leg {symbol}: {res.get('retMsg')} (code {res.get('retCode')})")

@@ -46,6 +46,7 @@ if not PASSWORD:
 
 STATE_FILE = os.path.join(BASE_DIR, "options_bot_state.json")
 LOG_FILE = os.path.join(BASE_DIR, "options_bot.log")
+TRADES_FILE = os.path.join(BASE_DIR, "options_trades.csv")
 
 ACTIVE_SESSIONS = set()
 
@@ -108,6 +109,25 @@ def read_options_state() -> Dict[str, Any]:
         "ddh_rebalance_count": 0,
         "ddh_realized_pnl": 0.0,
     }
+
+
+def read_options_trades(limit: int = 50) -> List[Dict[str, Any]]:
+    """Read historical closed cycles from options_trades.csv for post-trade analysis."""
+    if not os.path.exists(TRADES_FILE):
+        return []
+    trades: List[Dict[str, Any]] = []
+    try:
+        import csv
+        with open(TRADES_FILE, "r", encoding="utf-8", errors="replace") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row.get("timestamp"):
+                    trades.append(row)
+    except Exception:
+        pass
+    if limit > 0 and len(trades) > limit:
+        return trades[-limit:]
+    return trades
 
 
 _LOGS_CACHE: Dict[int, List[str]] = {}
@@ -562,6 +582,37 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
       </table>
     </div>
 
+    <!-- Closed Trade Cycles History Table -->
+    <div class="card" style="margin-bottom: 24px; padding: 0; overflow: hidden;">
+      <div style="padding: 16px 20px; border-bottom: 1px solid var(--card-border); font-weight: 600; font-size: 14px; display: flex; justify-content: space-between; align-items: center;">
+        <span>Historical Trade Audit Ledger (options_trades.csv)</span>
+        <span style="font-size: 12px; color: var(--text-muted);" id="trades-count">Audit Ledger</span>
+      </div>
+      <div style="overflow-x: auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Timestamp (UTC)</th>
+              <th>Cycle</th>
+              <th>Outcome</th>
+              <th>Exit Reason</th>
+              <th>Put Strike</th>
+              <th>Call Strike</th>
+              <th>Gross PnL</th>
+              <th>DDH PnL</th>
+              <th>Net PnL</th>
+              <th>Return %</th>
+              <th>Capital After</th>
+              <th>Hold Time</th>
+            </tr>
+          </thead>
+          <tbody id="trades-table-body">
+            __TRADES_ROWS__
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- Terminal Logs -->
     <div class="terminal-card">
       <div class="terminal-header">
@@ -737,6 +788,37 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
         tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; color: var(--text-muted);">No active strangle deployed. Scanning Bybit surface for optimal ~15-delta pairs...</td></tr>`;
       }
 
+      // Historical Trade Audit Ledger Table Update
+      if (d.recent_trades && Array.isArray(d.recent_trades) && d.recent_trades.length > 0) {
+        const tBody = document.getElementById('trades-table-body');
+        const tCount = document.getElementById('trades-count');
+        if (tCount) tCount.textContent = `${d.recent_trades.length} recorded cycles`;
+        if (tBody) {
+          tBody.innerHTML = d.recent_trades.slice().reverse().map(t => {
+            const isWin = (t.outcome || '').toUpperCase() === 'WIN';
+            const pnl = parseFloat(t.net_pnl_usd || 0);
+            const pnlColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+            const badgeCls = isWin ? 'badge-live' : 'badge-sim';
+            const pStrike = t.put_strike ? `$${parseFloat(t.put_strike).toLocaleString()} ($${parseFloat(t.put_exit_px || 0).toFixed(1)})` : 'N/A';
+            const cStrike = t.call_strike ? `$${parseFloat(t.call_strike).toLocaleString()} ($${parseFloat(t.call_exit_px || 0).toFixed(1)})` : 'N/A';
+            return `<tr>
+              <td><code>${t.timestamp || ''}</code></td>
+              <td>#${t.cycle_id || ''}</td>
+              <td><span class="badge ${badgeCls}">${t.outcome || 'N/A'}</span></td>
+              <td><strong>${t.exit_reason || ''}</strong></td>
+              <td>${pStrike}</td>
+              <td>${cStrike}</td>
+              <td>$${parseFloat(t.gross_pnl_usd || 0).toFixed(2)}</td>
+              <td>$${parseFloat(t.ddh_hedge_pnl_usd || 0).toFixed(2)}</td>
+              <td><strong style="color: ${pnlColor};">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}</strong></td>
+              <td><span style="color: ${pnlColor};">${t.return_on_1k_pct || '0.00%'}</span></td>
+              <td>$${parseFloat(t.capital_after_usd || 1000).toFixed(2)}</td>
+              <td>${parseFloat(t.hold_time_hours || 0).toFixed(1)}h</td>
+            </tr>`;
+          }).join('');
+        }
+      }
+
       // Logs
       if (d.logs && Array.isArray(d.logs)) {
         const term = document.getElementById('terminal');
@@ -846,6 +928,7 @@ class OptionsTelemetryHandler(BaseHTTPRequestHandler):
         state["uptime_seconds"] = up_sec
         state["uptime"] = up_str
         state["spot_price"] = prices.get("BTCUSDT", 75500.0)
+        state["recent_trades"] = read_options_trades(limit=20)
         return state
 
     def _send_json(self, data: Any, status: int = 200):
@@ -883,6 +966,10 @@ class OptionsTelemetryHandler(BaseHTTPRequestHandler):
             self._serve_dashboard()
         elif parsed.path in ["/api/status", "/api/live-status"]:
             self._send_json(self._get_live_payload())
+        elif parsed.path == "/api/trades":
+            limit_val = int(qs.get("limit", [50])[0])
+            trades = read_options_trades(limit=limit_val)
+            self._send_json({"total": len(trades), "trades": trades})
         elif parsed.path == "/api/ai-summary":
             self._handle_api_ai_summary()
         elif parsed.path == "/api/logs":
@@ -915,6 +1002,17 @@ class OptionsTelemetryHandler(BaseHTTPRequestHandler):
 - **Dynamic Delta Hedge**: Perp Qty: {state.get('ddh_perp_position', 0):.3f} | Rebalances: {state.get('ddh_rebalance_count', 0)} | PnL: ${state.get('ddh_realized_pnl', 0):+.2f}
 - **Message**: {state.get('last_status_message', 'N/A')}
 """
+        trades = read_options_trades(limit=5)
+        if trades:
+            md += "\n## Recent Closed Cycles (Audit Ledger Trail)\n"
+            for t in reversed(trades):
+                outcome = t.get('outcome', 'N/A')
+                reason = t.get('exit_reason', 'N/A')
+                pnl = float(t.get('net_pnl_usd', 0))
+                cap = float(t.get('capital_after_usd', 1000))
+                hold = float(t.get('hold_time_hours', 0))
+                md += f"- **Cycle {t.get('cycle_id', '?')}**: {outcome} ({reason}) | Net PnL: ${pnl:+.2f} | Capital After: ${cap:,.2f} | Hold: {hold:.1f}h\n"
+
         body = md.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/markdown; charset=utf-8")
@@ -1060,6 +1158,39 @@ class OptionsTelemetryHandler(BaseHTTPRequestHandler):
           rows = """<tr><td colspan="9" style="text-align: center; color: var(--text-muted);">No active strangle deployed. Scanning Bybit surface for optimal ~15-delta pairs...</td></tr>"""
 
         html = html.replace("__LEGS_ROWS__", rows)
+
+        # Render Closed Trades Audit Ledger Rows for initial load
+        trades = read_options_trades(limit=20)
+        if trades:
+            t_rows = []
+            for t in reversed(trades):
+                outcome = (t.get("outcome") or "").upper()
+                is_win = (outcome == "WIN")
+                badge_cls = "badge-live" if is_win else "badge-sim"
+                net_pnl = float(t.get("net_pnl_usd", 0))
+                pnl_color = "var(--green)" if net_pnl >= 0 else "var(--red)"
+                p_strike = f"${float(t.get('put_strike', 0)):,.0f} (${float(t.get('put_exit_px', 0)):.1f})" if t.get("put_strike") else "N/A"
+                c_strike = f"${float(t.get('call_strike', 0)):,.0f} (${float(t.get('call_exit_px', 0)):.1f})" if t.get("call_strike") else "N/A"
+                t_rows.append(f"""
+                  <tr>
+                    <td><code>{t.get('timestamp', '')}</code></td>
+                    <td>#{t.get('cycle_id', '')}</td>
+                    <td><span class="badge {badge_cls}">{outcome}</span></td>
+                    <td><strong>{t.get('exit_reason', '')}</strong></td>
+                    <td>{p_strike}</td>
+                    <td>{c_strike}</td>
+                    <td>${float(t.get('gross_pnl_usd', 0)):.2f}</td>
+                    <td>${float(t.get('ddh_hedge_pnl_usd', 0)):.2f}</td>
+                    <td><strong style="color: {pnl_color};">{'+' if net_pnl >= 0 else ''}${net_pnl:.2f}</strong></td>
+                    <td><span style="color: {pnl_color};">{t.get('return_on_1k_pct', '0.00%')}</span></td>
+                    <td>${float(t.get('capital_after_usd', 1000)):,.2f}</td>
+                    <td>{float(t.get('hold_time_hours', 0)):.1f}h</td>
+                  </tr>
+                """)
+            html = html.replace("__TRADES_ROWS__", "".join(t_rows))
+        else:
+            html = html.replace("__TRADES_ROWS__", """<tr><td colspan="12" style="text-align: center; color: var(--text-muted); padding: 18px;">No closed cycles in audit ledger yet. Active strangle is currently harvesting theta...</td></tr>""")
+
         html = html.replace("__INITIAL_LOGS__", "\n".join(get_system_logs(35)))
 
         body = html.encode("utf-8")

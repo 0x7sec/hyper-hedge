@@ -277,8 +277,6 @@ The autonomous daemon and telemetry suite are deployed with a strict **$1,000 US
 | **WebSocket Stream** | `ws://<VPS_IP>:8083/ws?password=<SECRET>` | 1.5s RFC 6455 real-time delta & mark price stream |
 | **AI Status Summary API** | `http://<VPS_IP>:8083/api/ai-summary?password=<SECRET>` | Markdown summary (~400 tokens) for LLMs & AI agents |
 | **JSON Status API** | `http://<VPS_IP>:8083/api/status?password=<SECRET>` | Full state payload including active legs & Greeks |
-| **Sanitized Error Logs** | `http://<VPS_IP>:8083/api/logs?lines=50&password=<SECRET>` | Real-time logs with credentials redacted |
-
 ### 8.3 Systemd Management on Production VPS
 
 ```bash
@@ -291,4 +289,32 @@ journalctl -u bybit-options-harvester -f
 # Restart options suite
 systemctl restart bybit-options-harvester options-telemetry
 ```
+
+### 8.4 Execution Safety & Exchange Handshake Architecture
+
+To guarantee that the bot never trades phantom positions or leaves orphaned orders on the Bybit exchange, the execution layer implements a multi-stage handshake protocol:
+
+1. **Active Orderbook Liquidity Filter**:
+   - The scanner (`StrangleScanner`) enforces that both the Put and Call candidates possess active orderbook bids ($\text{Bid}_1 \ge \$10.00$) and matching asks ($\text{Ask}_1 \ge \text{Bid}_1 > 0$).
+   - Contracts with theoretical mark prices but empty orderbooks (`bid1Price == 0.0`) are strictly rejected.
+
+2. **Market Execution into the Bid (`orderType="Market"`)**:
+   - Both the Put and Call legs are deployed using `orderType="Market"`, guaranteeing immediate execution against the top bid of the orderbook.
+   - Eliminates resting limit orders sitting indefinitely as `Status: New`.
+
+3. **Exchange Fill Confirmation Handshake**:
+   - Immediately following deployment, the engine calls `get_open_positions_map()` to query Bybit's live position table.
+   - Confirms that both legs exist on the exchange with `Side: Sell` and `Size > 0`.
+   - If either leg fails to fill, the engine executes an immediate rollback: cancels all open orders, unwinds the filled partial leg, and resets to `STATE_0_SCANNING` to preserve delta neutrality.
+   - The engine retrieves the exact average fill prices (`avgPrice`) from the exchange to calculate the authentic initial collected premium.
+
+4. **Zero-Size Buyback Guard (Anti-Unintended Long Protection)**:
+   - When closing legs for profit take, stop loss, or defensive roll, `close_option_leg` checks `session.get_positions(symbol=symbol)`.
+   - If the short position size is `0`, the buy order is skipped entirely. This prevents placing a Buy order against a non-existent short, which would otherwise open an unintended **Long position**.
+   - If an accidental Long position is detected, the bot automatically executes a Market Sell to flatten it.
+
+5. **Runtime Reconciliation**:
+   - Every tick, `_reconcile_open_positions_with_exchange()` verifies that both open short legs remain intact on Bybit.
+   - If an external liquidation or manual close breaks one leg, the bot liquidates the unpaired leg and safely resets.
+
 
